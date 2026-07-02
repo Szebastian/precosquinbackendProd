@@ -1,0 +1,39 @@
+# FastAPI + ASGI
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+python-multipart==0.0.9
+
+# Supabase
+supabase==2.31.0
+
+# Database
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.35
+alembic==1.13.2
+
+# Auth & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+pydantic[email]>=2.11.7
+pydantic-settings>=2.5.0
+python-dotenv==1.0.1
+
+# HTTP Client
+httpx==0.27.0
+aiohttp==3.10.5
+
+# PDF Generation (deferred - install system deps first)
+# weasyprint==62.3
+jinja2==3.1.4
+
+# Email
+sendgrid==6.11.0
+
+# WhatsApp
+twilio==9.2.0
+
+# Utils
+python-dateutil==2.9.0
+pytz==2024.1
+structlog==24.4.0
+rich==13.8.0

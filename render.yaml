@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: precosquin-api
+    runtime: python
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: FRONTEND_URL
+        value: https://precosquinpiramides.com
+      - key: API_URL
+        value: https://precosquin-backend.onrender.com
+      - key: LOG_LEVEL
+        value: info
