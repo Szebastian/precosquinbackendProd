@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Depends
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 
 from app.db.session import get_supabase
@@ -22,7 +22,7 @@ class LoginResponse(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
     full_name: str
     role: Optional[str] = "staff"
 
@@ -68,7 +68,7 @@ async def login(request: LoginRequest):
             )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Error de autenticación: {str(e)}",
+            detail="Error de autenticación",
         )
 
 
@@ -122,7 +122,7 @@ async def register(request: RegisterRequest):
             )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error de registro: {str(e)}",
+            detail="Error de registro",
         )
 
 
@@ -149,7 +149,7 @@ async def refresh_token(request: RefreshRequest):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Error al refrescar token: {str(e)}",
+            detail="Error al refrescar token",
         )
 
 
@@ -162,7 +162,7 @@ async def logout():
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al cerrar sesión: {str(e)}",
+            detail="Error al cerrar sesión",
         )
 
 
