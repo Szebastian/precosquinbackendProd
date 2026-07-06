@@ -1,14 +1,18 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
-from datetime import datetime, timezone
 import secrets
+import string
 
 from app.core.deps import require_role, CurrentUser
-from app.core.utils import generate_temp_password
 from app.db.session import get_supabase
 
 router = APIRouter()
+
+
+def generate_temp_password(length: int = 12) -> str:
+    chars = string.ascii_letters + string.digits + "!@#$%"
+    return ''.join(secrets.choice(chars) for _ in range(length))
 
 
 class UserInvite(BaseModel):
@@ -65,7 +69,7 @@ async def invite_user(
         auth_result = db.auth.admin.create_user({
             "email": user.email,
             "password": temp_password,
-            "email_confirm": False,
+            "email_confirm": True,
             "user_metadata": {
                 "full_name": user.full_name,
                 "role": user.role,
@@ -105,7 +109,7 @@ async def invite_user(
         error_msg = str(e).lower()
         if "already" in error_msg or "already exists" in error_msg:
             raise HTTPException(status_code=409, detail="Ya existe un usuario con ese email")
-        raise HTTPException(status_code=500, detail="Error al crear usuario")
+        raise HTTPException(status_code=500, detail=f"Error al crear usuario: {str(e)}")
 
 
 @router.patch("/users/{user_id}")
@@ -179,7 +183,7 @@ async def update_event_config(
     result = db.table("event_config").upsert({
         "id": 1,
         **update_data,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": "now()",
     }).execute()
 
     db.table("audit_logs").insert({

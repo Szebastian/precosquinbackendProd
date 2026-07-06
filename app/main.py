@@ -28,15 +28,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    import structlog
-    logger = structlog.get_logger(__name__)
-
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        logger.error("Unhandled exception", exc_info=exc, path=request.url.path, method=request.method)
         return JSONResponse(
             status_code=500,
-            content={"detail": "Error interno del servidor"},
+            content={"detail": f"Internal server error: {str(exc)}"},
         )
 
     # Security middleware
@@ -61,6 +57,20 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         return {"status": "healthy", "version": settings.VERSION}
+
+    @app.get("/debug-supabase")
+    async def debug_supabase():
+        from app.db.session import _supabase_client
+        from app.core.config import settings
+        import os
+        url = os.environ.get("SUPABASE_URL", "NOT SET")
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "NOT SET")[:10]
+        return {
+            "client_initialized": _supabase_client is not None,
+            "url": url[:30],
+            "key_prefix": key,
+            "env_url": settings.SUPABASE_URL[:30] if settings.SUPABASE_URL else "NONE",
+        }
 
     @app.get("/")
     async def root():

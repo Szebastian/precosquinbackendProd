@@ -1,27 +1,30 @@
-import structlog
-from supabase import create_client, Client
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 
-logger = structlog.get_logger(__name__)
+_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(_env_path, override=True)
+
+from supabase import create_client, Client
 
 _supabase_client: Client | None = None
 
 
 async def init_db() -> None:
     global _supabase_client
-    import os
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
     if not url or not key or url.startswith("eyJ"):
-        logger.warning("Invalid Supabase config", url_prefix=url[:30], key_prefix=key[:10])
+        print(f"WARNING: Invalid Supabase config. URL={url[:30]}... Key={key[:10]}...")
         _supabase_client = None
         return
 
     try:
         _supabase_client = create_client(url, key)
-        logger.info("Supabase client initialized", url=url)
+        print(f"OK: Supabase client initialized for {url}")
     except Exception as e:
-        logger.warning("Could not connect to Supabase", error=str(e))
+        print(f"WARNING: Could not connect to Supabase: {e}")
         _supabase_client = None
 
 

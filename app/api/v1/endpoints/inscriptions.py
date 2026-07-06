@@ -114,7 +114,7 @@ async def create_inscription(inscription: InscriptionCreate):
     except RuntimeError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Base de datos no disponible",
+            detail=f"Base de datos no disponible: {str(e)}",
         )
 
     try:
@@ -122,7 +122,7 @@ async def create_inscription(inscription: InscriptionCreate):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error consultando inscripciones",
+            detail=f"Error consultando inscripciones: {str(e)}",
         )
     if existing.data:
         raise HTTPException(
@@ -138,7 +138,7 @@ async def create_inscription(inscription: InscriptionCreate):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al crear inscripción en base de datos",
+            detail=f"Error al crear inscripción en base de datos: {str(e)}",
         )
 
     if not result.data:
@@ -188,7 +188,7 @@ async def update_inscription_status(
         logger.error("Supabase client not initialized", error=str(e), inscription_id=inscription_id, user_id=current_user.id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Base de datos no disponible",
+            detail=f"Base de datos no disponible: {str(e)}",
         )
 
     try:
@@ -197,7 +197,7 @@ async def update_inscription_status(
         logger.error("Error fetching inscription for status update", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al obtener la inscripción",
+            detail=f"Error al obtener la inscripción: {str(e)}",
         )
 
     if not existing.data:
@@ -222,7 +222,7 @@ async def update_inscription_status(
         logger.error("Error updating inscription status", inscription_id=inscription_id, new_status=new_status, error=str(e), user_id=current_user.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al actualizar el estado de la inscripción",
+            detail=f"Error al actualizar el estado de la inscripción: {str(e)}",
         )
 
     logger.info("Inscription update result", inscription_id=inscription_id, result_data=result.data if hasattr(result, 'data') else "no data attr")
@@ -254,7 +254,7 @@ async def upload_inscription_file(
         logger.error("Supabase client not initialized", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Base de datos no disponible",
+            detail=f"Base de datos no disponible: {str(e)}",
         )
 
     try:
@@ -263,7 +263,7 @@ async def upload_inscription_file(
             raise HTTPException(status_code=404, detail="Inscripción no encontrada")
     except Exception as e:
         logger.error("Error checking inscription existence", error=str(e), inscription_id=inscription_id)
-        raise HTTPException(status_code=500, detail="Error al consultar inscripción")
+        raise HTTPException(status_code=500, detail=f"Error al consultar inscripción: {str(e)}")
 
     allowed_types = {
         "dni_front": ["image/jpeg", "image/png"],
@@ -287,7 +287,7 @@ async def upload_inscription_file(
         logger.info("Read file content successfully", size_bytes=len(content), file_type=file_type, filename=file.filename)
     except Exception as e:
         logger.error("Error reading uploaded file", error=str(e), file_type=file_type, filename=file.filename)
-        raise HTTPException(status_code=500, detail="Error al leer el archivo")
+        raise HTTPException(status_code=500, detail=f"Error al leer el archivo: {str(e)}")
 
     try:
         logger.info("Attempting to upload to Supabase Storage", path=path, content_type=file.content_type)
@@ -299,7 +299,7 @@ async def upload_inscription_file(
         logger.info("File uploaded successfully", path=path)
     except Exception as e:
         logger.error("Error uploading file to Supabase Storage", error=str(e), path=path, file_type=file_type)
-        raise HTTPException(status_code=500, detail="Error al subir archivo")
+        raise HTTPException(status_code=500, detail=f"Error al subir archivo: {str(e)}")
 
     column_map = {
         "dni_front": "dni_front_url",
@@ -315,6 +315,6 @@ async def upload_inscription_file(
         logger.info("Database update successful")
     except Exception as e:
         logger.error("Error updating inscription record with file path", error=str(e), inscription_id=inscription_id, column=column_map[file_type])
-        raise HTTPException(status_code=500, detail="Error al actualizar la inscripción")
+        raise HTTPException(status_code=500, detail=f"Error al actualizar la inscripción: {str(e)}")
 
     return {"path": path, "message": "Archivo subido correctamente"}

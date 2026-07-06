@@ -1,14 +1,18 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
-from datetime import datetime, timezone
 import secrets
+import string
 
 from app.core.deps import get_current_user, require_role, CurrentUser
-from app.core.utils import generate_temp_password
 from app.db.session import get_supabase
 
 router = APIRouter()
+
+
+def generate_temp_password(length: int = 12) -> str:
+    chars = string.ascii_letters + string.digits + "!@#$%"
+    return ''.join(secrets.choice(chars) for _ in range(length))
 
 
 class JuryInvite(BaseModel):
@@ -95,7 +99,7 @@ async def invite_jury_member(
         error_msg = str(e).lower()
         if "already" in error_msg or "already exists" in error_msg:
             raise HTTPException(status_code=409, detail="Ya existe un usuario con ese email")
-        raise HTTPException(status_code=500, detail="Error al crear jurado")
+        raise HTTPException(status_code=500, detail=f"Error al crear jurado: {str(e)}")
 
 
 @router.delete("/members/{member_id}")
@@ -159,7 +163,7 @@ async def submit_evaluation(
     db = get_supabase()
     result = db.table("evaluations").update({
         "status": "SUBMITTED",
-        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "submitted_at": "now()",
     }).eq("id", evaluation_id).execute()
 
     if not result.data:
