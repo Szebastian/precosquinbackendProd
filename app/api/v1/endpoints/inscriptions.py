@@ -36,6 +36,8 @@ class InscriptionCreate(BaseModel):
     dance_list: Optional[str] = None
     themes: Optional[list] = None
     members: Optional[list] = None
+    accompanying_persons: Optional[list] = None
+    rider_tecnico: Optional[dict] = None
     website: Optional[str] = None
     instagram: Optional[str] = None
     youtube: Optional[str] = None
@@ -67,6 +69,8 @@ class InscriptionResponse(BaseModel):
     dance_list: Optional[str] = None
     themes: Optional[list] = None
     members: Optional[list] = None
+    accompanying_persons: Optional[list] = None
+    rider_tecnico: Optional[dict] = None
 
 
 class InscriptionListResponse(BaseModel):
@@ -148,6 +152,17 @@ async def create_inscription(inscription: InscriptionCreate):
         )
 
     return InscriptionResponse(**result.data[0])
+
+
+@router.get("/check-email")
+async def check_email_exists(email: str = Query(...)):
+    db = get_supabase()
+    try:
+        result = db.table("inscriptions").select("id").eq("email", email).eq("status", "PENDIENTE").execute()
+        return {"exists": bool(result.data)}
+    except Exception as e:
+        logger.error("Error checking email", error=str(e), email=email)
+        return {"exists": False}
 
 
 @router.get("/{inscription_id}", response_model=InscriptionResponse)
