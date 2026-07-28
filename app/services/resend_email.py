@@ -71,6 +71,8 @@ class ResendEmailSender:
                 "subject": message.subject,
                 "html": self._build_email_html(message.html, message.logo_url),
             }
+            if message.text:
+                payload["text"] = message.text
             if message.reply_to:
                 payload["reply_to"] = message.reply_to
 

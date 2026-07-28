@@ -13,6 +13,7 @@ class EmailMessage(BaseModel):
     to: str
     subject: str
     html: str
+    text: Optional[str] = None
     reply_to: Optional[str] = None
     logo_url: Optional[str] = None
 
