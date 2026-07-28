@@ -182,7 +182,7 @@ async def create_inscription(inscription: InscriptionCreate, db=Depends(get_db))
     insert_data = exclude_none(inscription)
     insert_data["status"] = InscriptionStatus.PENDIENTE.value
     allowed_columns = {
-        "email", "phone", "category", "subcategory", "full_name", "stage_name",
+        "email", "phone", "category", "subcategory", "full_name", "first_name", "last_name", "stage_name",
         "dni", "birth_date", "age", "address", "locality", "province", "city",
         "experience_years", "bio", "technical_needs", "proposal_name",
         "choreographer_name", "style", "dance_list", "themes", "members",
@@ -191,6 +191,8 @@ async def create_inscription(inscription: InscriptionCreate, db=Depends(get_db))
         "assistants_count", "band_members", "accept_no_prior_win",
         "accept_not_juror_org", "accept_regulations", "instrument_type", "instrument_name",
         "has_accompaniment", "accompaniment_instrument", "accompaniment_musician",
+        "accept_purely_instrumental", "accept_one_instrument", "accept_no_prerecorded",
+        "accept_no_instrument_change", "presentation", "artistic_name", "songs_list",
     }
     insert_data = {k: v for k, v in insert_data.items() if k in allowed_columns}
 
