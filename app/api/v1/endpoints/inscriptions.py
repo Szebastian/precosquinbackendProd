@@ -6,6 +6,7 @@ from typing import Optional, List
 from app.core.deps import get_current_user, require_role, CurrentUser, get_db
 from app.core.constants import InscriptionStatus, UserRole
 from app.core.utils import exclude_none
+from app.core.email import EmailMessage, get_email_sender
 
 logger = structlog.get_logger(__name__)
 
@@ -213,7 +214,14 @@ async def create_inscription(inscription: InscriptionCreate, db=Depends(get_db))
             detail="Error al crear inscripción",
         )
 
-    return InscriptionResponse(**result.data[0])
+    created = result.data[0]
+
+    try:
+        _send_confirmation_email(inscription, created)
+    except Exception as e:
+        logger.error("confirmation_email_failed", inscription_id=created.get("id"), error=str(e))
+
+    return InscriptionResponse(**created)
 
 
 @router.get("/check-email")
@@ -379,3 +387,60 @@ async def upload_inscription_file(
         raise HTTPException(status_code=500, detail=f"Error al actualizar la inscripción: {str(e)}")
 
     return {"path": path, "message": "Archivo subido correctamente"}
+
+
+def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
+    name = inscription.full_name or inscription.first_name or inscription.email
+    email = inscription.email
+    category = inscription.category or ""
+    subcategory = inscription.subcategory or ""
+    inscription_id = created.get("id", "")
+
+    cat_label = "Música" if category == "musica" else "Danza" if category == "danza" else category
+
+    html_body = f"""
+<h2 style="margin:0 0 8px 0;font-size:20px;color:#111827;">¡Inscripción recibida!</h2>
+<p style="margin:0 0 20px 0;color:#6b7280;font-size:15px;">Hola <strong>{name}</strong>, tu inscripción fue registrada correctamente.</p>
+
+<table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+  <tr>
+    <td style="padding:10px 14px;background:#f9fafb;border-radius:8px 0 0 8px;font-size:13px;color:#6b7280;font-weight:600;width:130px;">Estado</td>
+    <td style="padding:10px 14px;background:#f9fafb;border-radius:0 8px 8px 0;font-size:13px;color:#059669;font-weight:600;">PENDIENTE</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;font-size:13px;color:#6b7280;font-weight:600;">Categoría</td>
+    <td style="padding:10px 14px;font-size:13px;color:#111827;">{cat_label}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f9fafb;border-radius:8px 0 0 8px;font-size:13px;color:#6b7280;font-weight:600;">Subcategoría</td>
+    <td style="padding:10px 14px;background:#f9fafb;border-radius:0 8px 8px 0;font-size:13px;color:#111827;">{subcategory}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;font-size:13px;color:#6b7280;font-weight:600;">Email</td>
+    <td style="padding:10px 14px;font-size:13px;color:#111827;">{email}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 14px;background:#f9fafb;border-radius:8px 0 0 8px;font-size:13px;color:#6b7280;font-weight:600;">Nro. de inscripción</td>
+    <td style="padding:10px 14px;background:#f9fafb;border-radius:0 8px 8px 0;font-size:13px;color:#111827;font-family:monospace;">{inscription_id[:8]}...</td>
+  </tr>
+</table>
+
+<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:20px;">
+  <p style="margin:0;font-size:13px;color:#92400e;">
+    <strong>¿Qué sigue?</strong> Nuestro equipo revisará tu inscripción y te contactaremos pronto.
+    Mantené este correo como comprobante de tu registro.
+  </p>
+</div>
+
+<p style="margin:0;font-size:13px;color:#9ca3af;">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquin.com" style="color:#4c8be6;">info@precosquin.com</a></p>
+"""
+
+    email_sender = get_email_sender()
+    msg = EmailMessage(
+        to=email,
+        subject="Pre-Cosquín - Inscripción registrada",
+        html=html_body,
+        reply_to="info@precosquin.com",
+    )
+    result = email_sender.send(msg)
+    logger.info("confirmation_email_sent", to=email, status=result.status, message_id=result.message_id)
