@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     jury,
     staff,
     notifications,
+    communications,
     contracts,
     reports,
     admin,
@@ -44,6 +45,9 @@ api_router.include_router(staff.router, prefix="/staff", tags=["Staff"])
 
 # Notifications
 api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
+
+# Communications (email send/schedule/jobs)
+api_router.include_router(communications.router, prefix="/communications", tags=["Communications"])
 
 # Contracts
 api_router.include_router(contracts.router, prefix="/contracts", tags=["Contracts"])

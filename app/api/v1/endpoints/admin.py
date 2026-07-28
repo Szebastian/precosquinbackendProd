@@ -1,18 +1,12 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
-import secrets
-import string
 
-from app.core.deps import require_role, CurrentUser
-from app.db.session import get_supabase
+from app.core.deps import require_role, CurrentUser, get_db
+from app.core.constants import UserRole
+from app.core.utils import generate_temp_password, exclude_none, log_audit
 
 router = APIRouter()
-
-
-def generate_temp_password(length: int = 12) -> str:
-    chars = string.ascii_letters + string.digits + "!@#$%"
-    return ''.join(secrets.choice(chars) for _ in range(length))
 
 
 class UserInvite(BaseModel):
@@ -38,9 +32,9 @@ class EventConfigUpdate(BaseModel):
 @router.get("/users")
 async def list_users(
     role: Optional[str] = None,
-    current_user: CurrentUser = Depends(require_role("admin")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
 ):
-    db = get_supabase()
     query = db.table("profiles").select("*")
 
     if role:
@@ -53,16 +47,16 @@ async def list_users(
 @router.post("/users/invite", status_code=201)
 async def invite_user(
     user: UserInvite,
-    current_user: CurrentUser = Depends(require_role("admin")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
 ):
-    valid_roles = ["jurado", "organizador", "admin", "staff"]
+    valid_roles = [r.value for r in UserRole]
     if user.role not in valid_roles:
         raise HTTPException(
             status_code=400,
             detail=f"Rol inválido. Debe ser uno de: {', '.join(valid_roles)}",
         )
 
-    db = get_supabase()
     temp_password = generate_temp_password()
 
     try:
@@ -89,12 +83,13 @@ async def invite_user(
             "is_active": True,
         }).execute()
 
-        db.table("audit_logs").insert({
-            "actor_id": current_user.id,
-            "action": "user_invited",
-            "target_id": user_id,
-            "metadata": {"email": user.email, "role": user.role},
-        }).execute()
+        log_audit(
+            db=db,
+            actor_id=current_user.id,
+            action="user_invited",
+            target_id=user_id,
+            metadata={"email": user.email, "role": user.role},
+        )
 
         return {
             "id": user_id,
@@ -116,10 +111,10 @@ async def invite_user(
 async def update_user(
     user_id: str,
     user: UserUpdate,
-    current_user: CurrentUser = Depends(require_role("admin")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
 ):
-    db = get_supabase()
-    update_data = {k: v for k, v in user.model_dump().items() if v is not None}
+    update_data = exclude_none(user)
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No hay datos para actualizar")
@@ -129,12 +124,13 @@ async def update_user(
     if not result.data:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    db.table("audit_logs").insert({
-        "actor_id": current_user.id,
-        "action": "user_updated",
-        "target_id": user_id,
-        "metadata": update_data,
-    }).execute()
+    log_audit(
+        db=db,
+        actor_id=current_user.id,
+        action="user_updated",
+        target_id=user_id,
+        metadata=update_data,
+    )
 
     return {"message": "Usuario actualizado correctamente"}
 
@@ -142,29 +138,32 @@ async def update_user(
 @router.delete("/users/{user_id}")
 async def deactivate_user(
     user_id: str,
-    current_user: CurrentUser = Depends(require_role("admin")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
 ):
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="No puedes desactivarte a ti mismo")
 
-    db = get_supabase()
     result = db.table("profiles").update({"is_active": False}).eq("id", user_id).execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    db.table("audit_logs").insert({
-        "actor_id": current_user.id,
-        "action": "user_deactivated",
-        "target_id": user_id,
-    }).execute()
+    log_audit(
+        db=db,
+        actor_id=current_user.id,
+        action="user_deactivated",
+        target_id=user_id,
+    )
 
     return {"message": "Usuario desactivado correctamente"}
 
 
 @router.get("/event-config")
-async def get_event_config(current_user: CurrentUser = Depends(require_role("admin"))):
-    db = get_supabase()
+async def get_event_config(
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
+):
     result = db.table("event_config").select("*").single().execute()
     return result.data or {}
 
@@ -172,32 +171,35 @@ async def get_event_config(current_user: CurrentUser = Depends(require_role("adm
 @router.patch("/event-config")
 async def update_event_config(
     config: EventConfigUpdate,
-    current_user: CurrentUser = Depends(require_role("admin")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
 ):
-    db = get_supabase()
-    update_data = {k: v for k, v in config.model_dump().items() if v is not None}
+    update_data = exclude_none(config)
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No hay datos para actualizar")
 
-    result = db.table("event_config").upsert({
+    db.table("event_config").upsert({
         "id": 1,
         **update_data,
         "updated_at": "now()",
     }).execute()
 
-    db.table("audit_logs").insert({
-        "actor_id": current_user.id,
-        "action": "event_config_updated",
-        "metadata": update_data,
-    }).execute()
+    log_audit(
+        db=db,
+        actor_id=current_user.id,
+        action="event_config_updated",
+        metadata=update_data,
+    )
 
     return {"message": "Configuración actualizada correctamente"}
 
 
 @router.get("/capacities")
-async def get_capacities(current_user: CurrentUser = Depends(require_role("admin"))):
-    db = get_supabase()
+async def get_capacities(
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
+):
     result = db.table("edition_capacities").select("*").execute()
     return result.data
 
@@ -205,10 +207,9 @@ async def get_capacities(current_user: CurrentUser = Depends(require_role("admin
 @router.patch("/capacities")
 async def update_capacities(
     capacities: List[dict],
-    current_user: CurrentUser = Depends(require_role("admin")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
 ):
-    db = get_supabase()
-
     for cap in capacities:
         db.table("edition_capacities").upsert(cap).execute()
 
@@ -219,9 +220,9 @@ async def update_capacities(
 async def list_audit_logs(
     action: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
-    current_user: CurrentUser = Depends(require_role("admin")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
 ):
-    db = get_supabase()
     query = db.table("audit_logs").select("*")
 
     if action:

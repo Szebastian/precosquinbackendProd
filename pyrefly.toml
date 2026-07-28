@@ -1,0 +1,6 @@
+# Pyrefly configuration for the backend Python project.
+# Placing this file in backend/ ensures Pyrefly uses the correct import root
+# (backend/) and Python interpreter when analyzing backend/app/*.py files,
+# instead of picking up the root pyproject.toml which belongs to the monorepo.
+
+python_interpreter = "C:/Users/Musimundo/AppData/Local/Programs/Python/Python311/python.exe"

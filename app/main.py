@@ -28,11 +28,20 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    @app.exception_handler(Exception)
-    async def global_exception_handler(request: Request, exc: Exception):
+    from fastapi.exceptions import RequestValidationError
+    import structlog
+    logger = structlog.get_logger(__name__)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        logger.error(
+            "Validation error in request",
+            errors=exc.errors(),
+            url=str(request.url),
+        )
         return JSONResponse(
-            status_code=500,
-            content={"detail": f"Internal server error: {str(exc)}"},
+            status_code=422,
+            content={"detail": exc.errors()},
         )
 
     # Security middleware

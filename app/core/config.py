@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     SENDGRID_FROM_EMAIL: str = "noreply@precosquin.com"
     SENDGRID_FROM_NAME: str = "Precosquin"
 
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "noreply@precosquin.com"
+    RESEND_FROM_NAME: str = "Precosquin"
+
     WHATSAPP_ACCESS_TOKEN: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     WHATSAPP_WEBHOOK_VERIFY_TOKEN: str = ""
@@ -60,6 +64,7 @@ class Settings(BaseSettings):
         "application/pdf",
         "image/jpeg",
         "image/png",
+        "image/webp",
         "audio/mpeg",
         "audio/wav",
         "video/mp4",

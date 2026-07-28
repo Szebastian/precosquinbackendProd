@@ -1,12 +1,11 @@
 import structlog
-from fastapi import APIRouter, HTTPException, status, Query, Depends, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, status, Query, Depends, UploadFile, File
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
-from datetime import datetime
-import uuid
 
-from app.core.deps import get_current_user, require_role, CurrentUser
-from app.db.session import get_supabase
+from app.core.deps import get_current_user, require_role, CurrentUser, get_db
+from app.core.constants import InscriptionStatus, UserRole
+from app.core.utils import exclude_none
 
 logger = structlog.get_logger(__name__)
 
@@ -18,7 +17,9 @@ class InscriptionCreate(BaseModel):
     phone: str
     category: str
     subcategory: str
-    full_name: str
+    full_name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     stage_name: Optional[str] = None
     dni: Optional[str] = None
     birth_date: Optional[str] = None
@@ -42,6 +43,26 @@ class InscriptionCreate(BaseModel):
     instagram: Optional[str] = None
     youtube: Optional[str] = None
     spotify: Optional[str] = None
+    dance_style: Optional[str] = None
+    dance_themes: Optional[list] = None
+    work_title: Optional[str] = None
+    assistants_count: Optional[int] = None
+    band_members: Optional[list] = None
+    accept_no_prior_win: Optional[bool] = None
+    accept_not_juror_org: Optional[bool] = None
+    accept_regulations: Optional[bool] = None
+    instrument_type: Optional[str] = None
+    instrument_name: Optional[str] = None
+    has_accompaniment: Optional[bool] = None
+    accompaniment_instrument: Optional[str] = None
+    accompaniment_musician: Optional[str] = None
+    accept_purely_instrumental: Optional[bool] = None
+    accept_one_instrument: Optional[bool] = None
+    accept_no_prerecorded: Optional[bool] = None
+    accept_no_instrument_change: Optional[bool] = None
+    presentation: Optional[str] = None
+    artistic_name: Optional[str] = None
+    songs_list: Optional[str] = None
 
 
 class InscriptionResponse(BaseModel):
@@ -51,6 +72,8 @@ class InscriptionResponse(BaseModel):
     category: str
     subcategory: str
     full_name: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     stage_name: Optional[str] = None
     status: str
     created_at: str
@@ -61,6 +84,7 @@ class InscriptionResponse(BaseModel):
     address: Optional[str] = None
     locality: Optional[str] = None
     province: Optional[str] = None
+    city: Optional[str] = None
     bio: Optional[str] = None
     technical_needs: Optional[str] = None
     proposal_name: Optional[str] = None
@@ -71,6 +95,30 @@ class InscriptionResponse(BaseModel):
     members: Optional[list] = None
     accompanying_persons: Optional[list] = None
     rider_tecnico: Optional[dict] = None
+    website: Optional[str] = None
+    instagram: Optional[str] = None
+    youtube: Optional[str] = None
+    spotify: Optional[str] = None
+    dance_style: Optional[str] = None
+    dance_themes: Optional[list] = None
+    work_title: Optional[str] = None
+    assistants_count: Optional[int] = None
+    band_members: Optional[list] = None
+    accept_no_prior_win: Optional[bool] = None
+    accept_not_juror_org: Optional[bool] = None
+    accept_regulations: Optional[bool] = None
+    instrument_type: Optional[str] = None
+    instrument_name: Optional[str] = None
+    has_accompaniment: Optional[bool] = None
+    accompaniment_instrument: Optional[str] = None
+    accompaniment_musician: Optional[str] = None
+    accept_purely_instrumental: Optional[bool] = None
+    accept_one_instrument: Optional[bool] = None
+    accept_no_prerecorded: Optional[bool] = None
+    accept_no_instrument_change: Optional[bool] = None
+    presentation: Optional[str] = None
+    artistic_name: Optional[str] = None
+    songs_list: Optional[str] = None
 
 
 class InscriptionListResponse(BaseModel):
@@ -87,10 +135,9 @@ async def list_inscriptions(
     category: Optional[str] = None,
     subcategory: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
-    current_user: CurrentUser = Depends(require_role("organizador", "admin", "staff", "jurado")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN, UserRole.STAFF, UserRole.JURADO)),
+    db=Depends(get_db),
 ):
-    db = get_supabase()
-
     query = db.table("inscriptions").select("*", count="exact")
 
     if category:
@@ -112,17 +159,15 @@ async def list_inscriptions(
 
 
 @router.post("/", response_model=InscriptionResponse, status_code=status.HTTP_201_CREATED)
-async def create_inscription(inscription: InscriptionCreate):
+async def create_inscription(inscription: InscriptionCreate, db=Depends(get_db)):
+    if not inscription.full_name and inscription.first_name and inscription.last_name:
+        inscription.full_name = f"{inscription.first_name} {inscription.last_name}"
+    elif inscription.first_name and not inscription.full_name:
+        inscription.full_name = inscription.first_name
+    elif inscription.last_name and not inscription.full_name:
+        inscription.full_name = inscription.last_name
     try:
-        db = get_supabase()
-    except RuntimeError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Base de datos no disponible: {str(e)}",
-        )
-
-    try:
-        existing = db.table("inscriptions").select("id").eq("email", inscription.email).eq("status", "PENDIENTE").execute()
+        existing = db.table("inscriptions").select("id").eq("email", inscription.email).eq("status", InscriptionStatus.PENDIENTE).execute()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -134,15 +179,30 @@ async def create_inscription(inscription: InscriptionCreate):
             detail="Ya existe una inscripción pendiente con este email",
         )
 
-    insert_data = {k: v for k, v in inscription.model_dump().items() if v is not None}
-    insert_data["status"] = "PENDIENTE"
+    insert_data = exclude_none(inscription)
+    insert_data["status"] = InscriptionStatus.PENDIENTE.value
+    allowed_columns = {
+        "email", "phone", "category", "subcategory", "full_name", "stage_name",
+        "dni", "birth_date", "age", "address", "locality", "province", "city",
+        "experience_years", "bio", "technical_needs", "proposal_name",
+        "choreographer_name", "style", "dance_list", "themes", "members",
+        "accompanying_persons", "rider_tecnico", "website", "instagram",
+        "youtube", "spotify", "dance_style", "dance_themes", "work_title",
+        "assistants_count", "band_members", "accept_no_prior_win",
+        "accept_not_juror_org", "accept_regulations", "instrument_type", "instrument_name",
+        "has_accompaniment", "accompaniment_instrument", "accompaniment_musician",
+    }
+    insert_data = {k: v for k, v in insert_data.items() if k in allowed_columns}
 
     try:
         result = db.table("inscriptions").insert(insert_data).execute()
     except Exception as e:
+        detail_msg = str(e)
+        if '422' in detail_msg or 'column' in detail_msg.lower() or 'schema' in detail_msg.lower():
+            detail_msg = f"Error de esquema en la base de datos. Verificá que todas las columnas existan: {detail_msg}"
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al crear inscripción en base de datos: {str(e)}",
+            detail=f"Error al crear inscripción en base de datos: {detail_msg}",
         )
 
     if not result.data:
@@ -155,10 +215,9 @@ async def create_inscription(inscription: InscriptionCreate):
 
 
 @router.get("/check-email")
-async def check_email_exists(email: str = Query(...)):
-    db = get_supabase()
+async def check_email_exists(email: str = Query(...), db=Depends(get_db)):
     try:
-        result = db.table("inscriptions").select("id").eq("email", email).eq("status", "PENDIENTE").execute()
+        result = db.table("inscriptions").select("id").eq("email", email).eq("status", InscriptionStatus.PENDIENTE).execute()
         return {"exists": bool(result.data)}
     except Exception as e:
         logger.error("Error checking email", error=str(e), email=email)
@@ -169,8 +228,8 @@ async def check_email_exists(email: str = Query(...)):
 async def get_inscription(
     inscription_id: str,
     current_user: CurrentUser = Depends(get_current_user),
+    db=Depends(get_db),
 ):
-    db = get_supabase()
     result = db.table("inscriptions").select("*").eq("id", inscription_id).single().execute()
 
     if not result.data:
@@ -187,23 +246,15 @@ async def update_inscription_status(
     inscription_id: str,
     new_status: str,
     reason: Optional[str] = None,
-    current_user: CurrentUser = Depends(require_role("organizador", "admin", "jurado")),
+    current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN, UserRole.JURADO)),
+    db=Depends(get_db),
 ):
-    valid_statuses = ["PENDIENTE", "EN_REVISION", "APROBADA", "RECHAZADA", "CONTRATO_FIRMADO"]
+    valid_statuses = [s.value for s in InscriptionStatus]
     if new_status not in valid_statuses:
         logger.warning("Invalid status update attempt", inscription_id=inscription_id, new_status=new_status, user_id=current_user.id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Estado inválido. Debe ser uno de: {', '.join(valid_statuses)}",
-        )
-
-    try:
-        db = get_supabase()
-    except RuntimeError as e:
-        logger.error("Supabase client not initialized", error=str(e), inscription_id=inscription_id, user_id=current_user.id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Base de datos no disponible: {str(e)}",
         )
 
     try:
@@ -262,16 +313,8 @@ async def upload_inscription_file(
     inscription_id: str,
     file_type: str = Query(..., description="dni_front, dni_back, promo_photo, lyrics, score"),
     file: UploadFile = File(...),
+    db=Depends(get_db),
 ):
-    try:
-        db = get_supabase()
-    except RuntimeError as e:
-        logger.error("Supabase client not initialized", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Base de datos no disponible: {str(e)}",
-        )
-
     try:
         existing = db.table("inscriptions").select("id").eq("id", inscription_id).single().execute()
         if not existing.data:
@@ -294,7 +337,8 @@ async def upload_inscription_file(
     if file.content_type not in allowed_types[file_type]:
         raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido para {file_type}: {file.content_type}")
 
-    ext = file.filename.rsplit(".", 1)[-1] if "." in file.filename else "bin"
+    filename = file.filename or ""
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
     path = f"inscriptions/{inscription_id}/{file_type}.{ext}"
 
     try:

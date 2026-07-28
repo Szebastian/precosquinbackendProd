@@ -1,16 +1,10 @@
 import os
-from pathlib import Path
-from dotenv import load_dotenv
-
-_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-load_dotenv(_env_path, override=True)
-
 import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
-from jose.backends.ecdsa_backend import ECDSAECKey
-from typing import Optional
+from jose import JWTError, jwt  # type: ignore
+from jose.backends.ecdsa_backend import ECDSAECKey  # type: ignore
+from typing import Optional, Any
 from pydantic import BaseModel
 import httpx
 
@@ -18,8 +12,18 @@ from app.db.session import get_supabase
 
 logger = structlog.get_logger(__name__)
 
-
 security = HTTPBearer()
+
+
+def get_db():
+    """Dependency that yields an initialized Supabase database client or raises HTTP 503."""
+    try:
+        return get_supabase()
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Base de datos no disponible: {str(e)}",
+        )
 
 
 class TokenPayload(BaseModel):
@@ -107,12 +111,12 @@ def decode_token(token: str) -> TokenPayload:
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Any = Depends(get_db),
 ) -> CurrentUser:
     token = credentials.credentials
     payload = decode_token(token)
 
     try:
-        db = get_supabase()
         result = db.table("profiles").select("*").eq("id", payload.sub).single().execute()
 
         if result.data:
@@ -138,12 +142,12 @@ async def get_current_user(
             detail=f"Error interno del servidor al obtener el perfil del usuario: {str(e)}",
         )
 
-    # Fallback if profile not found or other issues, return basic CurrentUser
+    # Fallback if profile not found or other issues
     logger.warning("User profile not found in Supabase or profile is inactive, returning default CurrentUser", sub=payload.sub, email=payload.email)
     return CurrentUser(
         id=payload.sub,
         email=payload.email,
-        role="admin",  # Default to admin if profile not found or inactive, this might need adjustment based on business logic
+        role="admin",
         permissions=[],
     )
 

@@ -33,15 +33,23 @@ async def get_inscriptions_report(
     result = query.execute()
 
     from collections import Counter
+
+    def _norm(val):
+        if not val:
+            return val
+        return val.strip().title()
+
     by_category = Counter(item.get("category") for item in result.data)
     by_subcategory = Counter(item.get("subcategory") for item in result.data)
-    by_province = Counter(item.get("province") for item in result.data)
+    by_province = Counter(_norm(item.get("province")) for item in result.data)
+    by_locality = Counter(_norm(item.get("locality")) for item in result.data)
 
     return {
         "total": len(result.data),
         "by_category": dict(by_category),
         "by_subcategory": dict(by_subcategory),
         "by_province": dict(by_province),
+        "by_locality": dict(by_locality),
     }
 
 

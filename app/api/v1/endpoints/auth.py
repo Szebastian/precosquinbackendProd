@@ -2,8 +2,8 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
-from app.db.session import get_supabase
-from app.core.deps import get_current_user, CurrentUser
+from app.core.deps import get_current_user, CurrentUser, get_db
+from app.core.constants import UserRole
 
 router = APIRouter()
 
@@ -24,7 +24,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: str
-    role: Optional[str] = "staff"
+    role: Optional[str] = UserRole.STAFF.value
 
 
 class RefreshRequest(BaseModel):
@@ -32,9 +32,7 @@ class RefreshRequest(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
-    db = get_supabase()
-
+async def login(request: LoginRequest, db=Depends(get_db)):
     try:
         result = db.auth.sign_in_with_password({
             "email": request.email,
@@ -73,9 +71,7 @@ async def login(request: LoginRequest):
 
 
 @router.post("/register", response_model=LoginResponse)
-async def register(request: RegisterRequest):
-    db = get_supabase()
-
+async def register(request: RegisterRequest, db=Depends(get_db)):
     try:
         result = db.auth.sign_up({
             "email": request.email,
@@ -126,9 +122,7 @@ async def register(request: RegisterRequest):
 
 
 @router.post("/refresh", response_model=LoginResponse)
-async def refresh_token(request: RefreshRequest):
-    db = get_supabase()
-
+async def refresh_token(request: RefreshRequest, db=Depends(get_db)):
     try:
         result = db.auth.refresh_session(request.refresh_token)
 
@@ -153,8 +147,7 @@ async def refresh_token(request: RefreshRequest):
 
 
 @router.post("/logout")
-async def logout():
-    db = get_supabase()
+async def logout(db=Depends(get_db)):
     try:
         db.auth.sign_out()
         return {"message": "Sesión cerrada correctamente"}
@@ -178,8 +171,10 @@ class ProfileResponse(BaseModel):
 
 
 @router.get("/profile", response_model=ProfileResponse)
-async def get_profile(current_user: CurrentUser = Depends(get_current_user)):
-    db = get_supabase()
+async def get_profile(
+    current_user: CurrentUser = Depends(get_current_user),
+    db=Depends(get_db),
+):
     result = db.table("profiles").select("*").eq("id", current_user.id).single().execute()
 
     if not result.data:
@@ -193,7 +188,7 @@ async def get_profile(current_user: CurrentUser = Depends(get_current_user)):
         id=p["id"],
         email=p["email"],
         full_name=p.get("full_name", ""),
-        role=p.get("role", "staff"),
+        role=p.get("role", UserRole.STAFF.value),
         organization_id=p.get("organization_id"),
         avatar_url=p.get("avatar_url"),
         is_active=p.get("is_active", True),
