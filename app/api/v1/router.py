@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     categories,
     storage,
     news,
+    messages,
 )
 
 api_router = APIRouter()
@@ -63,3 +64,6 @@ api_router.include_router(storage.router, prefix="/storage", tags=["Storage"])
 
 # News
 api_router.include_router(news.router, prefix="/news", tags=["News"])
+
+# Messages (contact form)
+api_router.include_router(messages.router, prefix="/messages", tags=["Messages"])
