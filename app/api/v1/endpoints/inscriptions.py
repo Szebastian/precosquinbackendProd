@@ -439,7 +439,29 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
     msg = EmailMessage(
         to=email,
         subject="Pre-Cosquín - Inscripción registrada",
-        html=html_body,
+        html="""<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,Helvetica,sans-serif;">
+<div style="max-width:600px;margin:0 auto;padding:32px 24px;">
+<div style="background:#ffffff;border-radius:12px;padding:32px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+<h2 style="margin:0 0 8px 0;font-size:22px;color:#111827;">Inscripción recibida</h2>
+<p style="margin:0 0 24px 0;color:#6b7280;font-size:15px;">Hola <strong>""" + name + """</strong>, tu inscripción fue registrada correctamente.</p>
+<table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+<tr><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#6b7280;font-weight:600;width:140px;">Estado</td><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#059669;font-weight:600;">PENDIENTE</td></tr>
+<tr><td style="padding:10px 14px;font-size:13px;color:#6b7280;font-weight:600;">Categoría</td><td style="padding:10px 14px;font-size:13px;color:#111827;">""" + cat_label + """</td></tr>
+<tr><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#6b7280;font-weight:600;">Subcategoría</td><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#111827;">""" + subcategory + """</td></tr>
+<tr><td style="padding:10px 14px;font-size:13px;color:#6b7280;font-weight:600;">Email</td><td style="padding:10px 14px;font-size:13px;color:#111827;">""" + email + """</td></tr>
+<tr><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#6b7280;font-weight:600;">Nro. inscripción</td><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#111827;font-family:monospace;">""" + inscription_id[:8] + """</td></tr>
+</table>
+<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:20px;">
+<p style="margin:0;font-size:13px;color:#92400e;"><strong>¿Qué sigue?</strong> Nuestro equipo revisará tu inscripción y te contactaremos pronto.</p>
+</div>
+<p style="margin:0;font-size:12px;color:#9ca3af;">Precosquin - Festival Provincial de Folklore · Puerto Pirámides, Chubut</p>
+</div>
+</div>
+</body>
+</html>""",
         reply_to="info@precosquin.com",
     )
     result = email_sender.send(msg)
