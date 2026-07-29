@@ -31,6 +31,7 @@ class MessageResponse(BaseModel):
     inscription_id: Optional[str] = None
     is_read: bool
     created_at: str
+    source: Optional[str] = "web"
 
 
 class MessageListResponse(BaseModel):
