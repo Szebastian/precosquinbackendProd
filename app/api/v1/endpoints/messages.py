@@ -139,6 +139,68 @@ async def delete_message(
     return {"message": "Mensaje eliminado"}
 
 
+class MessageReply(BaseModel):
+    to: str
+    subject: str = ""
+    body: str = ""
+
+
+@router.post("/{message_id}/reply")
+async def reply_to_message(
+    message_id: str,
+    reply: MessageReply,
+    current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN, UserRole.STAFF)),
+    db=Depends(get_db),
+):
+    try:
+        sender = get_email_sender()
+        html_reply = f'''<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:24px;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;max-width:600px;margin:0 auto">
+<tr><td style="padding:24px 32px">
+<div style="font-size:16px;font-weight:700;color:#1e3a8a;margin-bottom:16px">Respuesta de Precosquin</div>
+<div style="font-size:14px;color:#1e293b;line-height:1.7;white-space:pre-wrap">{reply.body}</div>
+<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8">
+Este mensaje fue enviado desde el panel de administración de Precosquin.
+</div>
+</td></tr>
+</table>
+</body>
+</html>'''
+        email_msg = EmailMessage(
+            to=reply.to,
+            subject=reply.subject or f"Re: {reply.subject}",
+            html=html_reply,
+            reply_to="admin@precosquinpiramides.com",
+        )
+        result = sender.send(email_msg)
+    except Exception as e:
+        logger.error("reply_email_failed", error=str(e), to=reply.to)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al enviar la respuesta: {str(e)}",
+        )
+
+    insert_data = {
+        "name": "Admin",
+        "email": "admin@precosquinpiramides.com",
+        "phone": None,
+        "subject": f"Re: {reply.subject}",
+        "message": reply.body,
+        "inscription_id": None,
+        "source": "reply",
+    }
+
+    try:
+        result_db = db.table("messages").insert(insert_data).execute()
+    except Exception as e:
+        logger.error("reply_save_error", error=str(e))
+
+    return {"message": "Respuesta enviada", "email_status": result.status}
+
+
 def _send_message_to_admin(msg: MessageCreate):
     html_body = f'''<!DOCTYPE html>
 <html lang="es">
