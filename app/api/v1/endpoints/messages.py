@@ -163,7 +163,7 @@ async def reply_to_message(
 <div style="font-size:16px;font-weight:700;color:#1e3a8a;margin-bottom:16px">Respuesta de Precosquin</div>
 <div style="font-size:14px;color:#1e293b;line-height:1.7;white-space:pre-wrap">{reply.body}</div>
 <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8">
-Este mensaje fue enviado desde el panel de administración de Precosquin.
+Este mensaje fue enviado desde el panel de administración de Precosquin Puerto Piramides.
 </div>
 </td></tr>
 </table>
