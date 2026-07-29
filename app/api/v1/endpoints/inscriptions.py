@@ -314,6 +314,14 @@ async def update_inscription_status(
     except Exception as e:
         logger.warning("Audit log failed (non-blocking)", inscription_id=inscription_id, error=str(e))
 
+    if new_status in ("EN_REVISION", "APROBADA", "RECHAZADA"):
+        try:
+            full_data = db.table("inscriptions").select("*").eq("id", inscription_id).single().execute()
+            if full_data.data:
+                _send_status_change_email(full_data.data, new_status, reason)
+        except Exception as e:
+            logger.error("status_change_email_failed", inscription_id=inscription_id, error=str(e))
+
     logger.info("Inscription status updated successfully", inscription_id=inscription_id, from_status=from_status, to_status=new_status, user_id=current_user.id)
     return {"message": f"Inscripción actualizada a {new_status}"}
 
@@ -587,3 +595,141 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
     )
     result = email_sender.send(msg)
     logger.info("confirmation_email_sent", to=email, status=result.status, message_id=result.message_id)
+
+
+def _send_status_change_email(inscription_data: dict, new_status: str, reason: Optional[str] = None):
+    email = inscription_data.get("email", "")
+    full_name = inscription_data.get("full_name", "")
+    inscription_id = inscription_data.get("id", "")
+    category = inscription_data.get("category", "")
+    subcategory = inscription_data.get("subcategory", "")
+
+    cat_label = "Música" if category == "musica" else "Danza" if category == "danza" else category
+    subcat_label = subcategory.replace("_", " ").replace("-", " ").title() if subcategory else "-"
+
+    status_config = {
+        "EN_REVISION": {
+            "subject": "Pre-Cosquín — Tu inscripción está en revisión",
+            "title": "Tu inscripción está siendo revisada",
+            "message": "Nuestro equipo está evaluando tu inscripción. Te avisaremos cuando tengamos un resultado.",
+            "bg_color": "#eff6ff",
+            "border_color": "#bfdbfe",
+            "title_color": "#1e40af",
+            "msg_color": "#1e3a8a",
+            "icon": '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
+        },
+        "APROBADA": {
+            "subject": "Pre-Cosquín — ¡Tu inscripción fue aprobada!",
+            "title": "¡Tu inscripción fue aprobada!",
+            "message": "Felicitaciones, tu inscripción al Festival Pre-Cosquín 2027 fue aprobada. Pronto nos contactaremos con los próximos pasos.",
+            "bg_color": "#f0fdf4",
+            "border_color": "#bbf7d0",
+            "title_color": "#166534",
+            "msg_color": "#15803d",
+            "icon": '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>',
+        },
+        "RECHAZADA": {
+            "subject": "Pre-Cosquín — Resultado de tu inscripción",
+            "title": "Resultado de tu inscripción",
+            "message": "Lamentamos informarte que tu inscripción no fue aprobada en esta edición del festival.",
+            "bg_color": "#fef2f2",
+            "border_color": "#fecaca",
+            "title_color": "#991b1b",
+            "msg_color": "#b91c1c",
+            "icon": '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>',
+        },
+    }
+
+    config = status_config.get(new_status)
+    if not config:
+        return
+
+    reason_html = ""
+    if reason and new_status == "RECHAZADA":
+        reason_html = f'''
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px">
+        <tr>
+          <td style="padding:14px 16px">
+            <div style="font-size:9px;color:#92400e;text-transform:uppercase;letter-spacing:0.1em;font-weight:700;margin-bottom:6px">Motivo del rechazo</div>
+            <div style="font-size:12px;color:#78350f;line-height:1.5">{reason}</div>
+          </td>
+        </tr>
+        </table>'''
+
+    html_body = f'''<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9">
+<tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
+
+<!-- HEADER -->
+<tr><td style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);padding:28px 32px;text-align:center">
+  <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:0.02em">Festival Pre-Cosquín 2027</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.7);margin-top:4px">Puerto Pirámides, Chubut</div>
+</td></tr>
+
+<!-- ICON + TITLE -->
+<tr><td style="padding:32px 32px 0;text-align:center">
+  <div style="margin-bottom:16px">{config["icon"]}</div>
+  <div style="font-size:18px;font-weight:700;color:{config["title_color"]};margin-bottom:8px">{config["title"]}</div>
+  <div style="font-size:13px;color:{config["msg_color"]};line-height:1.6;max-width:420px;margin:0 auto">{config["message"]}</div>
+</td></tr>
+
+<!-- STATUS CARD -->
+<tr><td style="padding:24px 32px 0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{config["bg_color"]};border:1px solid {config["border_color"]};border-radius:10px">
+  <tr>
+    <td style="padding:16px;text-align:center">
+      <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700;margin-bottom:4px">N° de Inscripción</div>
+      <div style="font-size:13px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;word-break:break-all">{inscription_id}</div>
+      <div style="border-top:1px solid {config["border_color"]};margin:12px 0"></div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="padding:4px 0;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;width:100px">Nombre</td>
+        <td style="padding:4px 0;font-size:12px;color:#0f172a;font-weight:500">{full_name}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Categoría</td>
+        <td style="padding:4px 0;font-size:12px;color:#0f172a;font-weight:500">{cat_label} › {subcat_label}</td>
+      </tr>
+      </table>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+{reason_html}
+
+<!-- NOTE -->
+<tr><td style="padding:20px 32px 0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
+  <tr>
+    <td style="padding:14px 16px">
+      <div style="font-size:11px;color:#475569;line-height:1.5">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb;text-decoration:none">info@precosquin.com</a></div>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+<!-- FOOTER -->
+<tr><td style="padding:24px 32px 28px;text-align:center">
+  <div style="font-size:10px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>'''
+
+    email_sender = get_email_sender()
+    msg = EmailMessage(
+        to=email,
+        subject=config["subject"],
+        html=html_body,
+        reply_to="info@precosquin.com",
+    )
+    result = email_sender.send(msg)
+    logger.info("status_change_email_sent", to=email, new_status=new_status, status=result.status, message_id=result.message_id)
