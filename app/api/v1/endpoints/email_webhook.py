@@ -1,7 +1,8 @@
+import email as email_lib
+import json
 import structlog
 from fastapi import APIRouter, Request, HTTPException, status, Depends
-from pydantic import BaseModel
-from typing import Optional
+from fastapi.responses import JSONResponse
 import re
 
 from app.core.deps import get_db
@@ -11,31 +12,50 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-class EmailWebhookPayload(BaseModel):
-    from_email: Optional[str] = None
-    sender: Optional[str] = None
-    to: Optional[str] = None
-    subject: Optional[str] = None
-    text: Optional[str] = None
-    html: Optional[str] = None
-    body: Optional[str] = None
-    date: Optional[str] = None
-    attachments: Optional[list] = None
-
-
-def _extract_email_address(raw: str) -> str:
-    if not raw:
+def _extract_email_address(raw_email_str: str) -> str:
+    if not raw_email_str:
         return ""
-    match = re.search(r'[\w.+-]+@[\w-]+\.[\w.]+', raw)
-    return match.group(0) if match else raw
+    match = re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", raw_email_str)
+    return match.group(0) if match else raw_email_str
 
 
 def _strip_html(html: str) -> str:
     if not html:
         return ""
-    clean = re.sub(r'<[^>]+>', '', html)
-    clean = re.sub(r'\s+', ' ', clean).strip()
+    clean = re.sub(r"<[^>]+>", "", html)
+    clean = re.sub(r"\s+", " ", clean).strip()
     return clean
+
+
+def _parse_raw_mime(raw_mime: str) -> dict:
+    result = {"subject": "", "text": "", "html": ""}
+    try:
+        parsed = email_lib.message_from_string(raw_mime)
+        result["subject"] = parsed.get("Subject", "") or ""
+        if parsed.is_multipart():
+            for part in parsed.walk():
+                ct = part.get_content_type()
+                payload = part.get_payload(decode=True)
+                charset = part.get_content_charset() or "utf-8"
+                if isinstance(payload, bytes):
+                    payload = payload.decode(charset, errors="replace")
+                if ct == "text/plain" and not result["text"]:
+                    result["text"] = payload or ""
+                elif ct == "text/html" and not result["html"]:
+                    result["html"] = payload or ""
+        else:
+            payload = parsed.get_payload(decode=True)
+            charset = parsed.get_content_charset() or "utf-8"
+            if isinstance(payload, bytes):
+                payload = payload.decode(charset, errors="replace")
+            ct = parsed.get_content_type()
+            if ct == "text/html":
+                result["html"] = payload or ""
+            else:
+                result["text"] = payload or ""
+    except Exception as e:
+        logger.error("mime_parse_error", error=str(e))
+    return result
 
 
 @router.post("/incoming")
@@ -50,35 +70,41 @@ async def receive_incoming_email(request: Request, db=Depends(get_db)):
     else:
         raw = await request.body()
         try:
-            import json
             body = json.loads(raw)
         except Exception:
             body = {}
 
     from_raw = body.get("from") or body.get("sender") or body.get("from_email") or ""
-    to_raw = body.get("to") or ""
-    subject = body.get("subject") or "(Sin asunto)"
-    text = body.get("text") or body.get("body") or ""
+    raw_mime = body.get("raw") or ""
+    subject = body.get("subject") or ""
+    text = body.get("text") or ""
     html = body.get("html") or ""
-    date = body.get("date") or ""
+
+    if raw_mime and not text and not html:
+        parsed = _parse_raw_mime(raw_mime)
+        subject = subject or parsed["subject"]
+        text = text or parsed["text"]
+        html = html or parsed["html"]
 
     email_from = _extract_email_address(str(from_raw))
-
     message_text = text or _strip_html(html) if html else ""
 
     if not email_from:
-        logger.warning("incoming_email_no_sender", body=body)
-        raise HTTPException(
+        logger.warning("incoming_email_no_sender", from_raw=from_raw)
+        return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing sender address",
+            content={"error": "Missing sender address"},
         )
+
+    if len(message_text) > 5000:
+        message_text = message_text[:5000]
 
     insert_data = {
         "name": email_from.split("@")[0].replace(".", " ").replace("_", " ").title(),
         "email": email_from,
         "phone": None,
-        "subject": str(subject),
-        "message": message_text[:5000] if message_text else "(Sin contenido)",
+        "subject": str(subject) or "(Sin asunto)",
+        "message": message_text or "(Sin contenido)",
         "inscription_id": None,
         "source": "email",
     }
