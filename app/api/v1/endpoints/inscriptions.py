@@ -395,73 +395,95 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
     category = inscription.category or ""
     subcategory = inscription.subcategory or ""
     inscription_id = created.get("id", "")
+    created_at = created.get("created_at", "")
 
     cat_label = "Música" if category == "musica" else "Danza" if category == "danza" else category
 
-    html_body = f"""
-<h2 style="margin:0 0 8px 0;font-size:20px;color:#111827;">¡Inscripción recibida!</h2>
-<p style="margin:0 0 20px 0;color:#6b7280;font-size:15px;">Hola <strong>{name}</strong>, tu inscripción fue registrada correctamente.</p>
+    date_str = ""
+    if created_at:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            date_str = dt.strftime("%d/%m/%Y")
+        except Exception:
+            date_str = created_at[:10] if len(created_at) >= 10 else ""
+    if not date_str:
+        from datetime import datetime
+        date_str = datetime.now().strftime("%d/%m/%Y")
 
-<table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-  <tr>
-    <td style="padding:10px 14px;background:#f9fafb;border-radius:8px 0 0 8px;font-size:13px;color:#6b7280;font-weight:600;width:130px;">Estado</td>
-    <td style="padding:10px 14px;background:#f9fafb;border-radius:0 8px 8px 0;font-size:13px;color:#059669;font-weight:600;">PENDIENTE</td>
-  </tr>
-  <tr>
-    <td style="padding:10px 14px;font-size:13px;color:#6b7280;font-weight:600;">Categoría</td>
-    <td style="padding:10px 14px;font-size:13px;color:#111827;">{cat_label}</td>
-  </tr>
-  <tr>
-    <td style="padding:10px 14px;background:#f9fafb;border-radius:8px 0 0 8px;font-size:13px;color:#6b7280;font-weight:600;">Subcategoría</td>
-    <td style="padding:10px 14px;background:#f9fafb;border-radius:0 8px 8px 0;font-size:13px;color:#111827;">{subcategory}</td>
-  </tr>
-  <tr>
-    <td style="padding:10px 14px;font-size:13px;color:#6b7280;font-weight:600;">Email</td>
-    <td style="padding:10px 14px;font-size:13px;color:#111827;">{email}</td>
-  </tr>
-  <tr>
-    <td style="padding:10px 14px;background:#f9fafb;border-radius:8px 0 0 8px;font-size:13px;color:#6b7280;font-weight:600;">Nro. de inscripción</td>
-    <td style="padding:10px 14px;background:#f9fafb;border-radius:0 8px 8px 0;font-size:13px;color:#111827;font-family:monospace;">{inscription_id[:8]}...</td>
-  </tr>
-</table>
+    def f(label: str, value: str) -> str:
+        return f'''<div style="margin-bottom:8px"><span style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em">{label}</span><br><span style="font-size:12px;color:#0f172a;font-weight:500">{value or '-'}</span></div>'''
 
-<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:20px;">
-  <p style="margin:0;font-size:13px;color:#92400e;">
-    <strong>¿Qué sigue?</strong> Nuestro equipo revisará tu inscripción y te contactaremos pronto.
-    Mantené este correo como comprobante de tu registro.
-  </p>
-</div>
+    first = inscription.first_name or ""
+    last = inscription.last_name or ""
+    full = f"{first} {last}".strip() or name
+    dni = inscription.dni or ""
+    birth = inscription.birth_date or ""
+    age = str(inscription.age) if inscription.age else "-"
+    address = inscription.address or ""
+    locality = inscription.locality or ""
+    province = inscription.province or ""
+    phone = inscription.phone or ""
 
-<p style="margin:0;font-size:13px;color:#9ca3af;">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquin.com" style="color:#4c8be6;">info@precosquin.com</a></p>
-"""
-
-    email_sender = get_email_sender()
-    msg = EmailMessage(
-        to=email,
-        subject="Pre-Cosquín - Inscripción registrada",
-        html="""<!DOCTYPE html>
+    html_body = f'''<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
 <body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,Helvetica,sans-serif;">
 <div style="max-width:600px;margin:0 auto;padding:32px 24px;">
-<div style="background:#ffffff;border-radius:12px;padding:32px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-<h2 style="margin:0 0 8px 0;font-size:22px;color:#111827;">Inscripción recibida</h2>
-<p style="margin:0 0 24px 0;color:#6b7280;font-size:15px;">Hola <strong>""" + name + """</strong>, tu inscripción fue registrada correctamente.</p>
-<table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-<tr><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#6b7280;font-weight:600;width:140px;">Estado</td><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#059669;font-weight:600;">PENDIENTE</td></tr>
-<tr><td style="padding:10px 14px;font-size:13px;color:#6b7280;font-weight:600;">Categoría</td><td style="padding:10px 14px;font-size:13px;color:#111827;">""" + cat_label + """</td></tr>
-<tr><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#6b7280;font-weight:600;">Subcategoría</td><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#111827;">""" + subcategory + """</td></tr>
-<tr><td style="padding:10px 14px;font-size:13px;color:#6b7280;font-weight:600;">Email</td><td style="padding:10px 14px;font-size:13px;color:#111827;">""" + email + """</td></tr>
-<tr><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#6b7280;font-weight:600;">Nro. inscripción</td><td style="padding:10px 14px;background:#f3f4f6;font-size:13px;color:#111827;font-family:monospace;">""" + inscription_id[:8] + """</td></tr>
-</table>
-<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:20px;">
-<p style="margin:0;font-size:13px;color:#92400e;"><strong>¿Qué sigue?</strong> Nuestro equipo revisará tu inscripción y te contactaremos pronto.</p>
+<div style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+<div style="background:linear-gradient(135deg,#1e3a8a,#4c8be6);height:6px;"></div>
+<div style="padding:32px;">
+  <div style="text-align:center;margin-bottom:24px;">
+    <div style="font-size:20px;font-weight:800;color:#0f172a;">Festival Pre-Cosquín 2027</div>
+    <div style="font-size:11px;color:#64748b;margin-top:4px;">Puerto Pirámides, Chubut</div>
+  </div>
+  <div style="text-align:center;margin-bottom:24px;">
+    <div style="font-size:16px;font-weight:700;color:#1e3a8a;">Constancia de Inscripción</div>
+    <div style="font-size:11px;color:#64748b;margin-top:4px;">Fecha: {date_str}</div>
+  </div>
+  <div style="background:#f1f5f9;border-radius:8px;padding:12px 16px;margin-bottom:24px;text-align:center;">
+    <div style="font-size:9px;color:#64748b;text-transform:uppercase">N° de Inscripción</div>
+    <div style="font-size:14px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;margin-top:2px">{inscription_id}</div>
+  </div>
+  <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">
+  <div style="font-size:10px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px">Datos Personales</div>
+  {f('Nombre Completo', full)}
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+    {f('DNI', dni)}{f('Nacimiento', birth)}{f('Edad', age + ' años' if age != '-' else '-')}
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+    {f('Domicilio', address)}{f('Localidad', locality)}{f('Provincia', province)}
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    {f('Teléfono', phone)}{f('Email', email)}
+  </div>
+  <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">
+  <div style="font-size:10px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px">Participación</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    {f('Categoría', cat_label)}{f('Subcategoría', subcategory)}
+  </div>
+  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 16px;margin-top:20px;text-align:center;">
+    <p style="margin:0;font-size:13px;color:#166534;"><strong>Estado: PENDIENTE</strong></p>
+    <p style="margin:6px 0 0;font-size:12px;color:#15803d;">Nuestro equipo revisará tu inscripción y te contactaremos pronto.</p>
+  </div>
+  <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-top:12px;">
+    <p style="margin:0;font-size:12px;color:#92400e;">Conservá este correo como comprobante de tu registro.</p>
+  </div>
 </div>
-<p style="margin:0;font-size:12px;color:#9ca3af;">Precosquin - Festival Provincial de Folklore · Puerto Pirámides, Chubut</p>
+</div>
+<div style="text-align:center;padding:16px 0;">
+  <p style="margin:0;font-size:11px;color:#9ca3af;">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquin.com" style="color:#4c8be6;">info@precosquin.com</a></p>
+  <p style="margin:4px 0 0;font-size:10px;color:#cbd5e1;">Precosquin - Festival Provincial de Folklore · Puerto Pirámides, Chubut</p>
 </div>
 </div>
 </body>
-</html>""",
+</html>'''
+
+    email_sender = get_email_sender()
+    msg = EmailMessage(
+        to=email,
+        subject="Pre-Cosquín - Constancia de Inscripción",
+        html=html_body,
         reply_to="info@precosquin.com",
     )
     result = email_sender.send(msg)
