@@ -82,7 +82,7 @@ async def list_messages(
     current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN, UserRole.STAFF)),
     db=Depends(get_db),
 ):
-    query = db.table("messages").select("*", count="exact")
+    query = db.table("messages").select("*")
 
     if unread_only:
         query = query.eq("is_read", False)
@@ -90,12 +90,17 @@ async def list_messages(
     offset = (page - 1) * page_size
     result = query.order("created_at", desc=True).range(offset, offset + page_size - 1).execute()
 
+    count_query = db.table("messages").select("id", count="exact")
+    if unread_only:
+        count_query = count_query.eq("is_read", False)
+    count_result = count_query.execute()
+
     unread_result = db.table("messages").select("id", count="exact").eq("is_read", False).execute()
 
     return MessageListResponse(
         data=[MessageResponse(**item) for item in result.data],
-        total=result.count or 0,
-        unread=unread_result.count or 0,
+        total=count_result.count if hasattr(count_result, 'count') else len(result.data),
+        unread=unread_result.count if hasattr(unread_result, 'count') else 0,
     )
 
 
