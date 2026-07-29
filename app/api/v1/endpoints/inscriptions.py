@@ -440,7 +440,6 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
         to=email,
         subject="Pre-Cosquín - Inscripción registrada",
         html=html_body,
-        text=f"¡Inscripción recibida!\n\nHola {name}, tu inscripción fue registrada correctamente.\n\nEstado: PENDIENTE\nCategoría: {cat_label}\nSubcategoría: {subcategory}\nEmail: {email}\nNro. de inscripción: {inscription_id[:8]}...\n\n¿Qué sigue? Nuestro equipo revisará tu inscripción y te contactará pronto.\nMantené este correo como comprobante de tu registro.\n\nSi tenés consultas, escribinos a info@precosquin.com",
         reply_to="info@precosquin.com",
     )
     result = email_sender.send(msg)
