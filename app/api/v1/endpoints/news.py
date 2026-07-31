@@ -1,16 +1,26 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Response
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import json
 import os
+import base64
+import hashlib
+import re
 from pathlib import Path
 
 from app.core.deps import require_role, CurrentUser
 
 router = APIRouter()
 
-# Path to local news JSON file
+# Paths
 NEWS_FILE = Path(__file__).resolve().parent.parent.parent / "news.json"
+NEWS_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "news"
+NEWS_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+# Cache headers
+CACHE_HEADERS = {"Cache-Control": "public, max-age=300, stale-while-revalidate=60"}
+
 
 class NewsItem(BaseModel):
     id: Optional[int] = None
@@ -22,6 +32,7 @@ class NewsItem(BaseModel):
     thumbType: str  # 'img' | 'icon'
     thumbSrc: str
     thumbBg: str
+
 
 # Default news items as fallback
 DEFAULT_NEWS = [
@@ -67,6 +78,49 @@ DEFAULT_NEWS = [
     }
 ]
 
+
+def _is_base64_image(data: str) -> bool:
+    """Check if a string is a Base64-encoded image data URL."""
+    return data.startswith("data:image/")
+
+
+def _convert_base64_to_file(base64_data: str) -> str:
+    """Convert a Base64 data URL to a file and return the URL path."""
+    match = re.match(r"data:(image/\w+);base64,(.+)", base64_data)
+    if not match:
+        return base64_data
+
+    mime_type = match.group(1)
+    base64_str = match.group(2)
+
+    data_hash = hashlib.md5(base64_str.encode()).hexdigest()
+    ext = mime_type.split("/")[-1]
+    if ext == "jpeg":
+        ext = "jpg"
+
+    filename = f"{data_hash}.{ext}"
+    filepath = NEWS_IMAGES_DIR / filename
+
+    if not filepath.exists():
+        try:
+            image_bytes = base64.b64decode(base64_str)
+            filepath.write_bytes(image_bytes)
+        except Exception:
+            return base64_data
+
+    return f"/v1/news/images/{filename}"
+
+
+def _process_news_item(item: dict) -> dict:
+    """Convert Base64 images to file URLs in a news item."""
+    processed = dict(item)
+    if _is_base64_image(processed.get("image", "")):
+        processed["image"] = _convert_base64_to_file(processed["image"])
+    if _is_base64_image(processed.get("thumbSrc", "")):
+        processed["thumbSrc"] = _convert_base64_to_file(processed["thumbSrc"])
+    return processed
+
+
 def load_news() -> List[dict]:
     if not NEWS_FILE.exists():
         with open(NEWS_FILE, "w", encoding="utf-8") as f:
@@ -78,13 +132,62 @@ def load_news() -> List[dict]:
     except Exception:
         return DEFAULT_NEWS
 
+
 def save_news(news_list: List[dict]):
     with open(NEWS_FILE, "w", encoding="utf-8") as f:
         json.dump(news_list, f, ensure_ascii=False, indent=2)
 
+
 @router.get("/", response_model=List[NewsItem])
-async def get_news_list():
-    return load_news()
+async def get_news_list(
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+):
+    news_list = load_news()
+
+    if limit is not None:
+        news_list = news_list[offset:offset + limit] if offset else news_list[:limit]
+    elif offset is not None:
+        news_list = news_list[offset:]
+
+    processed = [_process_news_item(item) for item in news_list]
+    response = JSONResponse(content=processed)
+    response.headers.update(CACHE_HEADERS)
+    return response
+
+
+@router.get("/images/{filename}")
+async def get_news_image(filename: str):
+    """Serve a news image file."""
+    filepath = NEWS_IMAGES_DIR / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+
+    ext = filepath.suffix.lower()
+    media_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(ext, "application/octet-stream")
+
+    response = FileResponse(filepath, media_type=media_type)
+    response.headers.update({"Cache-Control": "public, max-age=86400"})
+    return response
+
+
+@router.get("/{news_id}", response_model=NewsItem)
+async def get_news_item(news_id: int):
+    news_list = load_news()
+    for item in news_list:
+        if item.get("id") == news_id:
+            processed = _process_news_item(item)
+            response = JSONResponse(content=processed)
+            response.headers.update(CACHE_HEADERS)
+            return response
+    raise HTTPException(status_code=404, detail="Noticia no encontrada")
+
 
 @router.post("/", response_model=NewsItem, status_code=status.HTTP_201_CREATED)
 async def create_or_update_news(
@@ -92,23 +195,27 @@ async def create_or_update_news(
     current_user: CurrentUser = Depends(require_role("organizador", "admin", "staff"))
 ):
     news_list = load_news()
-    
+
+    item_dict = item.model_dump()
+    if _is_base64_image(item_dict.get("image", "")):
+        item_dict["image"] = _convert_base64_to_file(item_dict["image"])
+    if _is_base64_image(item_dict.get("thumbSrc", "")):
+        item_dict["thumbSrc"] = _convert_base64_to_file(item_dict["thumbSrc"])
+
     if item.id:
-        # Update existing
         for idx, existing in enumerate(news_list):
             if existing.get("id") == item.id:
-                news_list[idx] = item.model_dump()
+                news_list[idx] = item_dict
                 save_news(news_list)
                 return item
         raise HTTPException(status_code=404, detail="Noticia no encontrada")
     else:
-        # Create new
         next_id = max([x.get("id", 0) for x in news_list]) + 1 if news_list else 1
-        new_item_dict = item.model_dump()
-        new_item_dict["id"] = next_id
-        news_list.append(new_item_dict)
+        item_dict["id"] = next_id
+        news_list.append(item_dict)
         save_news(news_list)
-        return NewsItem(**new_item_dict)
+        return NewsItem(**item_dict)
+
 
 @router.delete("/{news_id}", status_code=status.HTTP_200_OK)
 async def delete_news(
