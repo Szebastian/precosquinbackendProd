@@ -3,7 +3,7 @@
     "id": 1,
     "category": "FESTIVAL 2026",
     "title": "Se abren las inscripciones para el certamen Nuevos Valores",
-    "description": "El Pre Cosquín Puerto Pirámides abre sus puertas a nuevos talentos del folklore argentino. El certamen Nuevos Valores está dirigido a artistas emergentes que buscan dar a conocer su arte en uno de los escenarios más importantes del folklorismo patagónico. Las inscripciones están abiertas para los rubros de Música y Danza, con categorías que incluyen solistas, dúos, conjuntos y más. No perdás la oportunidad de formar parte de esta experiencia única.",
+    "description": "El Pre Cosquín Puerto Pirámides abre sus puertas a nuevos talentos del folklore argentino. El certamen Nuevos Valores está dirigido a artistas emergentes que buscan dar a conocer su arte en uno de los escenarios más importantes del folklorismo patagónico.",
     "image": "assets/home-background.webp",
     "thumbType": "img",
     "thumbSrc": "assets/img/cruzBaila.webp",
@@ -13,7 +13,7 @@
     "id": 5,
     "category": "NUEVO RUBRO",
     "title": "Nuevo rubro en música: \"Expresión Oral Folklórica\"",
-    "description": "El 55° Pre Cosquín 2027 (Sede Puerto Pirámides) anuncia la incorporación de un nuevo rubro: Expresión Oral Folklórica.\n\nPodrán participar narradores costumbristas, recitadores, decidores, relatores populares, intérpretes de poesía de raíz folklórica y otras expresiones afines vinculadas al patrimonio cultural inmaterial argentino.\nDetalles importantes de la participación:\n\nModalidad: La participación será estrictamente individual.\n\nDuración: La presentación tendrá una duración mínima de cinco (5) minutos y una máxima de ocho (8) minutos.\n\nPropuesta: La puesta en escena deberá centrarse en la expresión oral como elemento principal. Las obras deberán estar vinculadas a la cultura popular argentina (costumbres, tradiciones, historias populares, poesía gauchesca, etc.).\n\nAcompañamiento: Se permitirá el uso de elementos escénicos, vestuario y un acompañamiento musical de hasta un (1) músico complementario, siempre que no desplace a la expresión oral como eje central.\n\nRestricciones: No se admitirán contenidos discriminatorios, violentos o que atenten contra la dignidad de las personas.\n\nCriterios de Evaluación del Jurado:\n\nInterpretación y expresión oral: Capacidad comunicativa, calidad interpretativa, dicción, vocalización, manejo de la voz y transmisión emotiva.\n\nContenido, identidad cultural y valor folklórico: Calidad y coherencia del texto, originalidad y vinculación con las tradiciones argentinas.\n\nPresencia Escénica y Desempeño Artístico: Dominio escénico, naturalidad y capacidad de conectar con el público.\n\n¡Prepará tu propuesta y animate a participar!",
+    "description": "El 55° Pre Cosquín 2027 (Sede Puerto Pirámides) anuncia la incorporación de un nuevo rubro: Expresión Oral Folklórica.",
     "image": "/v1/news/images/5bbda79830b56726d57a76dd19d3af5a.png",
     "imagePosition": "bottom left",
     "thumbType": "img",
@@ -24,11 +24,22 @@
     "id": 6,
     "category": "INSTITUCIONAL",
     "title": "¡Presentamos la identidad oficial del Pre-Cosquín 2027!",
-    "description": "¡Comienza el camino hacia la plaza Próspero Molina! Te presentamos el logo oficial de la 55.° edición del Certamen para Nuevos Valores Pre-Cosquín 2027. \n\nEsta nueva identidad visual nos acompañará a lo largo de todo el ciclo, reflejando la esencia, el arte y la tradición de nuestra sede. Agendá las fechas confirmadas: el certamen se llevará a cabo del 4 al 18 de enero de 2027.\n\nPróximamente estaremos compartiendo el cronograma oficial, las pautas del reglamento y las fechas de apertura para las inscripciones de música y danza. ¡Prepará tu propuesta y formá parte de la fiesta mayor del folklore!",
+    "description": "¡Comienza el camino hacia la plaza Próspero Molina! Te presentamos el logo oficial de la 55.° edición del Certamen para Nuevos Valores Pre-Cosquín 2027.",
     "image": "/v1/news/images/0f1cce32e5bc437539818ed7cfa8fcd2.jpg",
     "imagePosition": "center center",
     "thumbType": "img",
     "thumbSrc": "assets/img/logoballena.webp",
+    "thumbBg": "bg-blue"
+  },
+  {
+    "id": 7,
+    "category": "PATROCINIO",
+    "title": "Conocé a los sponsors que hacen posible el Pre-Cosquín 2027",
+    "description": "Agradecemos a Hotel Rayentray, Hidroeléctrica El Chocón y Municipalidad de Puerto Pirámides por acompañarnos en esta nueva edición del certamen.",
+    "image": "assets/home-background.webp",
+    "imagePosition": "center center",
+    "thumbType": "img",
+    "thumbSrc": "assets/img/LRayentray.webp",
     "thumbBg": "bg-blue"
   }
 ]
