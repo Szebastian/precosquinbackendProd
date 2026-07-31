@@ -111,13 +111,17 @@ def _convert_base64_to_file(base64_data: str) -> str:
     return f"/v1/news/images/{filename}"
 
 
-def _process_news_item(item: dict) -> dict:
+def _process_news_item(item: dict, truncate_description: bool = False) -> dict:
     """Convert Base64 images to file URLs in a news item."""
     processed = dict(item)
     if _is_base64_image(processed.get("image", "")):
         processed["image"] = _convert_base64_to_file(processed["image"])
     if _is_base64_image(processed.get("thumbSrc", "")):
         processed["thumbSrc"] = _convert_base64_to_file(processed["thumbSrc"])
+    if truncate_description and "description" in processed and processed["description"]:
+        desc = processed["description"]
+        if len(desc) > 200:
+            processed["description"] = desc[:200].rsplit(" ", 1)[0] + "..."
     return processed
 
 
@@ -150,7 +154,7 @@ async def get_news_list(
     elif offset is not None:
         news_list = news_list[offset:]
 
-    processed = [_process_news_item(item) for item in news_list]
+    processed = [_process_news_item(item, truncate_description=True) for item in news_list]
     response = JSONResponse(content=processed)
     response.headers.update(CACHE_HEADERS)
     return response
