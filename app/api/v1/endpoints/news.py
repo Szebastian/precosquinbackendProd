@@ -21,6 +21,10 @@ NEWS_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 # Cache headers
 CACHE_HEADERS = {"Cache-Control": "public, max-age=300, stale-while-revalidate=60"}
 
+# In-memory cache to avoid re-reading file on every request
+_news_cache: Optional[List[dict]] = None
+_news_cache_mtime: float = 0.0
+
 
 class NewsItem(BaseModel):
     id: Optional[int] = None
@@ -126,20 +130,34 @@ def _process_news_item(item: dict, truncate_description: bool = False) -> dict:
 
 
 def load_news() -> List[dict]:
+    global _news_cache, _news_cache_mtime
+
     if not NEWS_FILE.exists():
         with open(NEWS_FILE, "w", encoding="utf-8") as f:
             json.dump(DEFAULT_NEWS, f, ensure_ascii=False, indent=2)
+        _news_cache = DEFAULT_NEWS
         return DEFAULT_NEWS
+
     try:
+        current_mtime = NEWS_FILE.stat().st_mtime
+        if _news_cache is not None and current_mtime == _news_cache_mtime:
+            return _news_cache
+
         with open(NEWS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        _news_cache = data
+        _news_cache_mtime = current_mtime
+        return data
     except Exception:
         return DEFAULT_NEWS
 
 
 def save_news(news_list: List[dict]):
+    global _news_cache, _news_cache_mtime
     with open(NEWS_FILE, "w", encoding="utf-8") as f:
         json.dump(news_list, f, ensure_ascii=False, indent=2)
+    _news_cache = news_list
+    _news_cache_mtime = NEWS_FILE.stat().st_mtime
 
 
 @router.get("/", response_model=List[NewsItem])
