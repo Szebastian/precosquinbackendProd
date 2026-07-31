@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
@@ -43,6 +44,9 @@ def create_app() -> FastAPI:
             status_code=422,
             content={"detail": exc.errors()},
         )
+
+    # Compression (must be first to compress all responses)
+    app.add_middleware(GZipMiddleware, minimum_size=500)
 
     # Security middleware
     app.add_middleware(
