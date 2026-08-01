@@ -17,7 +17,7 @@ NEWS_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "ne
 NEWS_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Cache headers
-CACHE_HEADERS = {"Cache-Control": "public, max-age=300, stale-while-revalidate=60"}
+CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
 
 # --- Pydantic schemas ---
