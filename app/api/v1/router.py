@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     news,
     messages,
     email_webhook,
+    cronograma,
 )
 
 api_router = APIRouter()
@@ -71,3 +72,6 @@ api_router.include_router(messages.router, prefix="/messages", tags=["Messages"]
 
 # Email webhook (incoming emails from ForwardEmail)
 api_router.include_router(email_webhook.router, prefix="/email", tags=["Email Webhook"])
+
+# Cronograma
+api_router.include_router(cronograma.router, prefix="/cronograma", tags=["Cronograma"])
