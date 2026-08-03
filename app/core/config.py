@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:4200"
     API_URL: str = "http://localhost:8000"
 
+    QR_ENCRYPTION_KEY: str = "PreCosquin2027!FestivalPuertoPiramides#QRSecure"
+
     class Config:
         env_file = str(load_dotenv_path)
         case_sensitive = True

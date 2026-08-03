@@ -1,12 +1,12 @@
 import structlog
-from fastapi import APIRouter, HTTPException, status, Query, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, status, Query, Depends, UploadFile, File, Response
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 
 from app.core.deps import get_current_user, require_role, CurrentUser, get_db
 from app.core.constants import InscriptionStatus, UserRole
 from app.core.utils import exclude_none
-from app.core.email import EmailMessage, get_email_sender
+from app.core.email import EmailMessage, EmailAttachment, get_email_sender
 
 logger = structlog.get_logger(__name__)
 
@@ -120,6 +120,7 @@ class InscriptionResponse(BaseModel):
     presentation: Optional[str] = None
     artistic_name: Optional[str] = None
     songs_list: Optional[str] = None
+    qr_code_base64: Optional[str] = None
 
 
 class InscriptionListResponse(BaseModel):
@@ -216,8 +217,24 @@ async def create_inscription(inscription: InscriptionCreate, db=Depends(get_db))
 
     created = result.data[0]
 
+    qr_b64 = None
     try:
-        _send_confirmation_email(inscription, created)
+        from app.core.qr import generate_inscription_qr
+        qr_b64 = generate_inscription_qr(
+            inscription_id=created.get("id", ""),
+            full_name=created.get("full_name", ""),
+            stage_name=created.get("stage_name"),
+            dni=created.get("dni"),
+            category=created.get("category", ""),
+            subcategory=created.get("subcategory", ""),
+            status=created.get("status", ""),
+        )
+        created["qr_code_base64"] = qr_b64
+    except Exception as e:
+        logger.error("qr_generation_failed", inscription_id=created.get("id"), error=str(e))
+
+    try:
+        _send_confirmation_email(inscription, created, qr_b64)
     except Exception as e:
         logger.error("confirmation_email_failed", inscription_id=created.get("id"), error=str(e))
 
@@ -232,6 +249,42 @@ async def check_email_exists(email: str = Query(...), db=Depends(get_db)):
     except Exception as e:
         logger.error("Error checking email", error=str(e), email=email)
         return {"exists": False}
+
+
+@router.get("/{inscription_id}/qr-image")
+async def get_qr_image(inscription_id: str, db=Depends(get_db)):
+    """Public endpoint: serves the QR code PNG image for an inscription."""
+    try:
+        result = db.table("inscriptions").select("id, full_name, stage_name, dni, category, subcategory, status").eq("id", inscription_id).execute()
+    except Exception as e:
+        logger.error("db_error", error=str(e))
+        raise HTTPException(status_code=500, detail="Error al buscar inscripción")
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    ins = result.data[0]
+
+    try:
+        from app.core.qr import generate_inscription_qr
+        import base64 as b64
+        qr_b64 = generate_inscription_qr(
+            inscription_id=ins.get("id", ""),
+            full_name=ins.get("full_name", ""),
+            stage_name=ins.get("stage_name"),
+            dni=ins.get("dni"),
+            category=ins.get("category", ""),
+            subcategory=ins.get("subcategory", ""),
+            status=ins.get("status", ""),
+        )
+        qr_bytes = b64.b64decode(qr_b64)
+        return Response(content=qr_bytes, media_type="image/png", headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Disposition": f'inline; filename="qr-{inscription_id[:8]}.png"',
+        })
+    except Exception as e:
+        logger.error("qr_generation_error", error=str(e), inscription_id=inscription_id)
+        raise HTTPException(status_code=500, detail="Error al generar QR")
 
 
 @router.get("/{inscription_id}", response_model=InscriptionResponse)
@@ -249,6 +302,43 @@ async def get_inscription(
         )
 
     return InscriptionResponse(**result.data)
+
+
+@router.delete("/{inscription_id}", status_code=status.HTTP_200_OK)
+async def delete_inscription(
+    inscription_id: str,
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    try:
+        result = db.table("inscriptions").select("id, full_name").eq("id", inscription_id).execute()
+    except Exception as e:
+        logger.error("Error fetching inscription for deletion", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener la inscripción: {str(e)}",
+        )
+
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inscripción no encontrada",
+        )
+
+    participant_name = result.data[0].get("full_name", "desconocido")
+
+    try:
+        db.table("inscriptions").delete().eq("id", inscription_id).execute()
+    except Exception as e:
+        logger.error("Error deleting inscription", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al eliminar la inscripción: {str(e)}",
+        )
+
+    logger.info("Inscription deleted", inscription_id=inscription_id, participant_name=participant_name, user_id=current_user.id)
+
+    return {"message": f"Inscripción de {participant_name} eliminada correctamente"}
 
 
 @router.patch("/{inscription_id}/status")
@@ -326,6 +416,42 @@ async def update_inscription_status(
     return {"message": f"Inscripción actualizada a {new_status}"}
 
 
+class BulkDeleteRequest(BaseModel):
+    ids: List[str]
+
+
+@router.post("/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_inscriptions(
+    req: BulkDeleteRequest,
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    if not req.ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se proporcionaron IDs")
+
+    try:
+        result = db.table("inscriptions").select("id, full_name").in_("id", req.ids).execute()
+    except Exception as e:
+        logger.error("Error fetching inscriptions for bulk delete", ids=req.ids, error=str(e), user_id=current_user.id)
+        raise HTTPException(status_code=500, detail=f"Error al obtener inscripciones: {str(e)}")
+
+    found_ids = [r["id"] for r in (result.data or [])]
+    not_found = [i for i in req.ids if i not in found_ids]
+
+    if not found_ids:
+        raise HTTPException(status_code=404, detail="Ninguna inscripción encontrada")
+
+    try:
+        db.table("inscriptions").delete().in_("id", found_ids).execute()
+    except Exception as e:
+        logger.error("Error bulk deleting inscriptions", ids=found_ids, error=str(e), user_id=current_user.id)
+        raise HTTPException(status_code=500, detail=f"Error al eliminar inscripciones: {str(e)}")
+
+    logger.info("Bulk delete inscriptions", count=len(found_ids), user_id=current_user.id)
+
+    return {"message": f"{len(found_ids)} inscripción(es) eliminada(s)", "deleted": len(found_ids), "not_found": not_found}
+
+
 @router.post("/upload/{inscription_id}")
 async def upload_inscription_file(
     inscription_id: str,
@@ -397,7 +523,7 @@ async def upload_inscription_file(
     return {"path": path, "message": "Archivo subido correctamente"}
 
 
-def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
+def _send_confirmation_email(inscription: InscriptionCreate, created: dict, qr_b64: str | None = None):
     name = inscription.full_name or inscription.first_name or inscription.email
     email = inscription.email
     category = inscription.category or ""
@@ -430,6 +556,32 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
     locality = inscription.locality or ""
     province = inscription.province or ""
     phone = inscription.phone or ""
+
+    qr_section = ''
+    qr_attachment = None
+    if qr_b64:
+        import base64 as _b64
+        qr_bytes = _b64.b64decode(qr_b64)
+        qr_attachment = EmailAttachment(
+            content_id="qr-precosquin-2027",
+            filename="qr-acreditacion.png",
+            content=qr_bytes,
+            content_type="image/png",
+        )
+        qr_section = (
+            '<!-- QR CODE -->\n'
+            '<tr><td style="padding:20px 32px 0;text-align:center">\n'
+            '  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">\n'
+            '  <tr>\n'
+            '    <td style="padding:20px 16px;text-align:center">\n'
+            '      <div style="font-size:9px;font-weight:700;color:#2563eb;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">C&#243;digo QR para Acreditaci&#243;n</div>\n'
+            '      <img src="cid:qr-precosquin-2027" alt="QR Acreditaci&#243;n" width="160" height="160" style="display:block;margin:0 auto;border-radius:8px;border:2px solid #e2e8f0" />\n'
+            '      <div style="font-size:10px;color:#64748b;margin-top:10px;line-height:1.4">Present&#225; este c&#243;digo QR en la acreditaci&#243;n del<br/>Festival Pre-Cosqu&#237;n 2027 &#183; Puerto Pir&#225;mides</div>\n'
+            '    </td>\n'
+            '  </tr>\n'
+            '  </table>\n'
+            '</td></tr>\n\n'
+        )
 
     def td_label(label: str) -> str:
         return f'<td style="padding:4px 8px 4px 0;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;white-space:nowrap;vertical-align:top">{label}</td>'
@@ -487,6 +639,7 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
   </table>
 </td></tr>
 
+{qr_section}
 <!-- DIVIDER -->
 <tr><td style="padding:20px 32px 0"><div style="border-top:1px solid #e2e8f0"></div></td></tr>
 
@@ -592,6 +745,7 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
         subject="Pre-Cosquín — Constancia de Inscripción",
         html=html_body,
         reply_to="info@precosquin.com",
+        attachments=[qr_attachment] if qr_attachment else None,
     )
     result = email_sender.send(msg)
     logger.info("confirmation_email_sent", to=email, status=result.status, message_id=result.message_id)
