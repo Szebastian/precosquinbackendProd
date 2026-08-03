@@ -328,7 +328,17 @@ async def delete_inscription(
     participant_name = result.data[0].get("full_name", "desconocido")
 
     try:
-        db.table("inscriptions").delete().eq("id", inscription_id).execute()
+        del_result = db.table("inscriptions").delete().eq("id", inscription_id).execute()
+        verify = db.table("inscriptions").select("id").eq("id", inscription_id).execute()
+        if verify.data:
+            logger.error("DELETE_FAILED_STILL_EXISTS", inscription_id=inscription_id, user_id=current_user.id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="La inscripción no pudo ser eliminada. Verifique los permisos de la tabla en Supabase.",
+            )
+        logger.info("inscription_deleted", inscription_id=inscription_id, participant_name=participant_name, user_id=current_user.id)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error deleting inscription", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
         raise HTTPException(
