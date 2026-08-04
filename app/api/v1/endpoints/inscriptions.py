@@ -1,4 +1,6 @@
 import structlog
+import random
+import time
 from fastapi import APIRouter, HTTPException, status, Query, Depends, UploadFile, File, Response
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
@@ -217,22 +219,6 @@ async def create_inscription(inscription: InscriptionCreate, db=Depends(get_db))
 
     created = result.data[0]
 
-    qr_b64 = None
-    try:
-        from app.core.qr import generate_inscription_qr
-        qr_b64 = generate_inscription_qr(
-            inscription_id=created.get("id", ""),
-            full_name=created.get("full_name", ""),
-            stage_name=created.get("stage_name"),
-            dni=created.get("dni"),
-            category=created.get("category", ""),
-            subcategory=created.get("subcategory", ""),
-            status=created.get("status", ""),
-        )
-        created["qr_code_base64"] = qr_b64
-    except Exception as e:
-        logger.error("qr_generation_failed", inscription_id=created.get("id"), error=str(e))
-
     try:
         _send_confirmation_email(inscription, created)
     except Exception as e:
@@ -241,11 +227,88 @@ async def create_inscription(inscription: InscriptionCreate, db=Depends(get_db))
     return InscriptionResponse(**created)
 
 
+# ─── OTP Verification ───────────────────────────────────────────────────────
+
+_otp_store: dict[str, dict] = {}  # email -> {code, expires_at}
+_otp_last_send: dict[str, float] = {}  # email -> last_send_timestamp
+OTP_SEND_COOLDOWN = 60  # seconds
+
+
+class OtpSendRequest(BaseModel):
+    email: EmailStr
+
+
+class OtpVerifyRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+
+@router.post("/send-otp")
+async def send_otp(req: OtpSendRequest, db=Depends(get_db)):
+    last_send = _otp_last_send.get(req.email, 0)
+    elapsed = time.time() - last_send
+    if elapsed < OTP_SEND_COOLDOWN:
+        remaining = int(OTP_SEND_COOLDOWN - elapsed)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Debés esperar {remaining} segundos antes de solicitar un nuevo código.",
+        )
+
+    code = f"{random.randint(0, 999999):06d}"
+    _otp_store[req.email] = {"code": code, "expires_at": time.time() + 600}
+    _otp_last_send[req.email] = time.time()
+
+    try:
+        sender = get_email_sender()
+        msg = EmailMessage(
+            to=req.email,
+            subject="Pre-Cosquín — Código de verificación",
+            html=f"""
+            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;">
+              <h2 style="color:#1e3a8a;">Código de verificación</h2>
+              <p>Tu código de verificación es:</p>
+              <div style="font-size:2.5rem;font-weight:700;letter-spacing:0.3em;color:#1e3a8a;text-align:center;padding:20px;background:#eff6ff;border-radius:12px;margin:20px 0;">{code}</div>
+              <p style="color:#64748b;font-size:0.875rem;">Este código expira en 10 minutos. Si no solicitaste este código, podés ignorar este mensaje.</p>
+            </div>
+            """,
+        )
+        sender.send(msg)
+    except Exception as e:
+        logger.error("Failed to send OTP", error=str(e), email=req.email)
+
+    return {"message": "Código enviado", "dev_code": code}
+
+
+@router.post("/verify-otp")
+async def verify_otp(req: OtpVerifyRequest):
+    stored = _otp_store.get(req.email)
+    if not stored:
+        raise HTTPException(status_code=400, detail="No se envió un código a este email. Solicitá uno nuevo.")
+    if time.time() > stored["expires_at"]:
+        _otp_store.pop(req.email, None)
+        raise HTTPException(status_code=400, detail="El código expiró. Solicitá uno nuevo.")
+    if stored["code"] != req.code:
+        raise HTTPException(status_code=400, detail="Código incorrecto. Verificá e intentá de nuevo.")
+    _otp_store.pop(req.email, None)
+    return {"message": "Email verificado correctamente"}
+
+
 @router.get("/check-email")
 async def check_email_exists(email: str = Query(...), db=Depends(get_db)):
     try:
-        result = db.table("inscriptions").select("id").eq("email", email).eq("status", InscriptionStatus.PENDIENTE).execute()
-        return {"exists": bool(result.data)}
+        result = db.table("inscriptions").select("id, status, full_name, category, subcategory, created_at").eq("email", email).order("created_at", desc=True).limit(1).execute()
+        if not result.data:
+            return {"exists": False}
+        ins = result.data[0]
+        return {
+            "exists": True,
+            "inscription_id": ins.get("id"),
+            "status": ins.get("status"),
+            "full_name": ins.get("full_name"),
+            "category": ins.get("category"),
+            "subcategory": ins.get("subcategory"),
+            "created_at": ins.get("created_at"),
+        }
     except Exception as e:
         logger.error("Error checking email", error=str(e), email=email)
         return {"exists": False}
@@ -418,12 +481,150 @@ async def update_inscription_status(
         try:
             full_data = db.table("inscriptions").select("*").eq("id", inscription_id).single().execute()
             if full_data.data:
-                _send_status_change_email(full_data.data, new_status, reason)
+                if new_status == "APROBADA":
+                    from app.core.qr import generate_inscription_qr
+                    qr_b64 = generate_inscription_qr(
+                        inscription_id=inscription_id,
+                        full_name=full_data.data.get("full_name", ""),
+                        stage_name=full_data.data.get("stage_name"),
+                        dni=full_data.data.get("dni"),
+                        category=full_data.data.get("category", ""),
+                        subcategory=full_data.data.get("subcategory", ""),
+                        status="APROBADA",
+                    )
+                    try:
+                        db.table("inscriptions").update({"qr_code_base64": qr_b64}).eq("id", inscription_id).execute()
+                    except Exception as e:
+                        logger.warning("qr_store_failed", inscription_id=inscription_id, error=str(e))
+                    _send_approval_email(full_data.data, qr_b64)
+                else:
+                    _send_status_change_email(full_data.data, new_status, reason)
         except Exception as e:
             logger.error("status_change_email_failed", inscription_id=inscription_id, error=str(e))
 
     logger.info("Inscription status updated successfully", inscription_id=inscription_id, from_status=from_status, to_status=new_status, user_id=current_user.id)
     return {"message": f"Inscripción actualizada a {new_status}"}
+
+
+@router.post("/{inscription_id}/approve")
+async def approve_inscription(
+    inscription_id: str,
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    """Approve an inscription: generate QR, store it, send approval email with QR attached."""
+    from app.core.qr import generate_inscription_qr
+
+    try:
+        existing = db.table("inscriptions").select("*").eq("id", inscription_id).single().execute()
+    except Exception as e:
+        logger.error("Error fetching inscription for approval", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+        raise HTTPException(status_code=500, detail=f"Error al obtener la inscripción: {str(e)}")
+
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    ins = existing.data
+    current_status = ins.get("status")
+    if current_status not in ("PENDIENTE", "EN_REVISION"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se puede aprobar una inscripción con estado {current_status}. Debe estar PENDIENTE o EN_REVISION.",
+        )
+
+    qr_base64 = generate_inscription_qr(
+        inscription_id=inscription_id,
+        full_name=ins.get("full_name", ""),
+        stage_name=ins.get("stage_name"),
+        dni=ins.get("dni"),
+        category=ins.get("category", ""),
+        subcategory=ins.get("subcategory", ""),
+        status="APROBADA",
+    )
+
+    try:
+        db.table("inscriptions").update({
+            "status": "APROBADA",
+            "qr_code_base64": qr_base64,
+        }).eq("id", inscription_id).execute()
+    except Exception as e:
+        logger.error("Error updating inscription to APROBADA", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+        raise HTTPException(status_code=500, detail=f"Error al aprobar la inscripción: {str(e)}")
+
+    try:
+        db.table("inscription_audit").insert({
+            "inscription_id": inscription_id,
+            "action": "status_changed_to_APROBADA",
+            "from_status": current_status,
+            "to_status": "APROBADA",
+        }).execute()
+    except Exception as e:
+        logger.warning("Audit log failed (non-blocking)", inscription_id=inscription_id, error=str(e))
+
+    try:
+        _send_approval_email(ins, qr_base64)
+    except Exception as e:
+        logger.error("approval_email_failed", inscription_id=inscription_id, error=str(e))
+
+    logger.info("inscription_approved", inscription_id=inscription_id, user_id=current_user.id)
+    return {"message": "Inscripción aprobada correctamente", "qr_code_base64": qr_base64}
+
+
+@router.post("/{inscription_id}/reject")
+async def reject_inscription(
+    inscription_id: str,
+    reason: Optional[str] = None,
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    """Reject an inscription with optional reason."""
+    try:
+        existing = db.table("inscriptions").select("id, status, full_name, email").eq("id", inscription_id).single().execute()
+    except Exception as e:
+        logger.error("Error fetching inscription for rejection", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+        raise HTTPException(status_code=500, detail=f"Error al obtener la inscripción: {str(e)}")
+
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    ins = existing.data
+    current_status = ins.get("status")
+    if current_status in ("RECHAZADA", "APROBADA"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se puede rechazar una inscripción con estado {current_status}.",
+        )
+
+    update_data = {"status": "RECHAZADA"}
+    if reason:
+        update_data["rejection_reason"] = reason
+
+    try:
+        db.table("inscriptions").update(update_data).eq("id", inscription_id).execute()
+    except Exception as e:
+        logger.error("Error updating inscription to RECHAZADA", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+        raise HTTPException(status_code=500, detail=f"Error al rechazar la inscripción: {str(e)}")
+
+    try:
+        db.table("inscription_audit").insert({
+            "inscription_id": inscription_id,
+            "action": "status_changed_to_RECHAZADA",
+            "from_status": current_status,
+            "to_status": "RECHAZADA",
+            "reason": reason,
+        }).execute()
+    except Exception as e:
+        logger.warning("Audit log failed (non-blocking)", inscription_id=inscription_id, error=str(e))
+
+    try:
+        full_data = db.table("inscriptions").select("*").eq("id", inscription_id).single().execute()
+        if full_data.data:
+            _send_status_change_email(full_data.data, "RECHAZADA", reason)
+    except Exception as e:
+        logger.error("rejection_email_failed", inscription_id=inscription_id, error=str(e))
+
+    logger.info("inscription_rejected", inscription_id=inscription_id, user_id=current_user.id)
+    return {"message": "Inscripción rechazada correctamente"}
 
 
 class BulkDeleteRequest(BaseModel):
@@ -460,6 +661,384 @@ async def bulk_delete_inscriptions(
     logger.info("Bulk delete inscriptions", count=len(found_ids), user_id=current_user.id)
 
     return {"message": f"{len(found_ids)} inscripción(es) eliminada(s)", "deleted": len(found_ids), "not_found": not_found}
+
+
+# ─── PUBLIC SELF-SERVICE ENDPOINTS ────────────────────────────────
+# These endpoints allow participants to manage their own inscriptions
+# after OTP verification (email-based authentication).
+
+
+class InscriptionUpdatePublic(BaseModel):
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    dni: Optional[str] = None
+    birth_date: Optional[str] = None
+    age: Optional[int] = None
+    address: Optional[str] = None
+    locality: Optional[str] = None
+    province: Optional[str] = None
+    stage_name: Optional[str] = None
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+    artistic_name: Optional[str] = None
+    proposal_name: Optional[str] = None
+    choreographer_name: Optional[str] = None
+    style: Optional[str] = None
+    dance_list: Optional[str] = None
+    bio: Optional[str] = None
+    presentation: Optional[str] = None
+    songs_list: Optional[str] = None
+    themes: Optional[list] = None
+    members: Optional[list] = None
+    accompanying_persons: Optional[list] = None
+    rider_tecnico: Optional[dict] = None
+    dance_style: Optional[str] = None
+    dance_themes: Optional[list] = None
+    work_title: Optional[str] = None
+    assistants_count: Optional[int] = None
+    band_members: Optional[list] = None
+    instrument_type: Optional[str] = None
+    instrument_name: Optional[str] = None
+    has_accompaniment: Optional[bool] = None
+    accompaniment_instrument: Optional[str] = None
+    accompaniment_musician: Optional[str] = None
+    technical_needs: Optional[str] = None
+
+
+class CancelRequest(BaseModel):
+    email: EmailStr
+
+
+@router.put("/{inscription_id}/update-public")
+async def update_inscription_public(
+    inscription_id: str,
+    data: InscriptionUpdatePublic,
+    db=Depends(get_db),
+):
+    """Public endpoint: participant updates their own inscription after OTP verification."""
+    try:
+        existing = db.table("inscriptions").select("id, email, status").eq("id", inscription_id).single().execute()
+    except Exception as e:
+        logger.error("db_error", error=str(e), inscription_id=inscription_id)
+        raise HTTPException(status_code=500, detail="Error al buscar inscripción")
+
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    if existing.data["email"].lower() != data.email.lower():
+        raise HTTPException(status_code=403, detail="El email no coincide con esta inscripción")
+
+    update_fields = data.model_dump(exclude_unset=True, exclude={"email"})
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No se proporcionaron campos para actualizar")
+
+    if "first_name" in update_fields or "last_name" in update_fields:
+        fn = update_fields.get("first_name") or ""
+        ln = update_fields.get("last_name") or ""
+        if fn or ln:
+            update_fields["full_name"] = f"{fn} {ln}".strip()
+
+    update_fields["updated_at"] = "now()"
+
+    try:
+        db.table("inscriptions").update(update_fields).eq("id", inscription_id).execute()
+    except Exception as e:
+        logger.error("update_public_error", error=str(e), inscription_id=inscription_id)
+        raise HTTPException(status_code=500, detail="Error al actualizar la inscripción")
+
+    try:
+        db.table("inscription_audit").insert({
+            "inscription_id": inscription_id,
+            "action": "participant_update",
+            "from_status": existing.data["status"],
+            "to_status": existing.data["status"],
+        }).execute()
+    except Exception as e:
+        logger.warning("audit_log_failed", inscription_id=inscription_id, error=str(e))
+
+    try:
+        full_data = db.table("inscriptions").select("*").eq("id", inscription_id).single().execute()
+        if full_data.data:
+            _send_update_email(full_data.data)
+    except Exception as e:
+        logger.error("update_email_failed", inscription_id=inscription_id, error=str(e))
+
+    logger.info("inscription_updated_public", inscription_id=inscription_id)
+    return {"message": "Inscripción actualizada correctamente"}
+
+
+@router.get("/{inscription_id}/get-public")
+async def get_inscription_public(inscription_id: str, email: str = Query(...), db=Depends(get_db)):
+    """Public endpoint: get full inscription data after OTP verification."""
+    try:
+        result = db.table("inscriptions").select("*").eq("id", inscription_id).single().execute()
+    except Exception as e:
+        logger.error("db_error", error=str(e))
+        raise HTTPException(status_code=500, detail="Error al buscar inscripción")
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    if result.data["email"].lower() != email.lower():
+        raise HTTPException(status_code=403, detail="El email no coincide con esta inscripción")
+
+    return result.data
+
+
+@router.post("/{inscription_id}/cancel")
+async def cancel_inscription_public(
+    inscription_id: str,
+    data: CancelRequest,
+    db=Depends(get_db),
+):
+    """Public endpoint: participant cancels their inscription after OTP verification."""
+    try:
+        existing = db.table("inscriptions").select("id, email, status, full_name").eq("id", inscription_id).single().execute()
+    except Exception as e:
+        logger.error("db_error", error=str(e), inscription_id=inscription_id)
+        raise HTTPException(status_code=500, detail="Error al buscar inscripción")
+
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    if existing.data["email"].lower() != data.email.lower():
+        raise HTTPException(status_code=403, detail="El email no coincide con esta inscripción")
+
+    from_status = existing.data.get("status")
+    participant_name = existing.data.get("full_name", "")
+
+    try:
+        db.table("inscription_audit").delete().eq("inscription_id", inscription_id).execute()
+        db.table("inscriptions").delete().eq("id", inscription_id).execute()
+        verify = db.table("inscriptions").select("id").eq("id", inscription_id).execute()
+        if verify.data:
+            raise HTTPException(status_code=500, detail="No se pudo eliminar la inscripción")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("cancel_error", error=str(e), inscription_id=inscription_id)
+        raise HTTPException(status_code=500, detail="Error al cancelar la inscripción")
+
+    try:
+        db.table("inscription_audit").insert({
+            "inscription_id": inscription_id,
+            "action": "participant_cancel",
+            "from_status": from_status,
+            "to_status": "CANCELADA",
+        }).execute()
+    except Exception as e:
+        logger.warning("audit_log_failed", inscription_id=inscription_id, error=str(e))
+
+    try:
+        _send_cancel_email(data.email, participant_name)
+    except Exception as e:
+        logger.error("cancel_email_failed", inscription_id=inscription_id, error=str(e))
+
+    logger.info("inscription_cancelled_public", inscription_id=inscription_id, participant_name=participant_name)
+    return {"message": "Inscripción cancelada correctamente"}
+
+
+@router.get("/{inscription_id}/constancia-html")
+async def get_constancia_html(inscription_id: str, db=Depends(get_db)):
+    """Public endpoint: returns constancia as printable HTML (browser prints as PDF)."""
+    try:
+        result = db.table("inscriptions").select("*").eq("id", inscription_id).single().execute()
+    except Exception as e:
+        logger.error("db_error", error=str(e))
+        raise HTTPException(status_code=500, detail="Error al buscar inscripción")
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    ins = result.data
+    full_name = ins.get("full_name", "")
+    email = ins.get("email", "")
+    category = ins.get("category", "")
+    subcategory = ins.get("subcategory", "")
+    status_val = ins.get("status", "")
+    created = ins.get("created_at", "")
+    dni = ins.get("dni", "")
+    locality = ins.get("locality", "")
+    province = ins.get("province", "")
+    phone = ins.get("phone", "")
+    birth_date = ins.get("birth_date", "")
+    age = ins.get("age", "")
+    address = ins.get("address", "")
+    artistic_name = ins.get("artistic_name", "")
+    proposal_name = ins.get("proposal_name", "")
+    stage_name = ins.get("stage_name", "")
+    bio = ins.get("bio", "")
+    themes = ins.get("themes") or []
+    members = ins.get("members") or []
+
+    cat_label = "Música" if category == "musica" else "Danza" if category == "danza" else category
+    subcat_label = subcategory.replace("_", " ").title() if subcategory else "-"
+    display_name = artistic_name or proposal_name or stage_name or full_name
+
+    from app.core.config import settings
+    frontend_url = settings.FRONTEND_URL or "https://app.precosquin.com"
+    logo_url = f"{frontend_url}/assets/img/logoballena.webp"
+
+    themes_html = ""
+    if themes:
+        themes_html = '<div style="margin-top:12px"><strong style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em">Temas</strong><ul style="margin:4px 0 0;padding-left:18px;font-size:11px;color:#334155">'
+        for t in themes:
+            if isinstance(t, dict):
+                title = t.get("title", "")
+                rhythm = t.get("rhythm", "")
+                author = t.get("author", "")
+                themes_html += f'<li>{title}'
+                if rhythm:
+                    themes_html += f' — {rhythm}'
+                if author:
+                    themes_html += f' ({author})'
+                themes_html += '</li>'
+            else:
+                themes_html += f'<li>{t}</li>'
+        themes_html += '</ul></div>'
+
+    members_html = ""
+    if members:
+        members_html = '<div style="margin-top:12px"><strong style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em">Integrantes</strong><ul style="margin:4px 0 0;padding-left:18px;font-size:11px;color:#334155">'
+        for m in members:
+            if isinstance(m, dict):
+                name = m.get("fullName", m.get("full_name", ""))
+                role = m.get("role", "")
+                members_html += f'<li>{name}'
+                if role:
+                    members_html += f' — {role}'
+                members_html += '</li>'
+            else:
+                members_html += f'<li>{m}</li>'
+        members_html += '</ul></div>'
+
+    html = f'''<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<title>Constancia de Inscripción — Pre-Cosquín 2027</title>
+<style>
+  @media print {{
+    body {{ margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+    .no-print {{ display: none !important; }}
+    @page {{ size: A4; margin: 15mm; }}
+  }}
+  body {{ font-family: Arial, Helvetica, sans-serif; background: #f1f5f9; color: #1e293b; margin: 0; padding: 20px; }}
+  .card {{ max-width: 600px; margin: 0 auto; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }}
+  .header {{ background: linear-gradient(135deg, #0f172a, #1e293b); padding: 24px 28px; text-align: center; }}
+  .header img {{ width: 40px; height: 40px; border-radius: 8px; background: #fff; padding: 3px; margin-bottom: 10px; }}
+  .header h1 {{ color: #fff; font-size: 16px; margin: 0; font-weight: 700; letter-spacing: 0.02em; }}
+  .header p {{ color: #94a3b8; font-size: 10px; margin: 4px 0 0; }}
+  .badge {{ display: inline-block; background: #f59e0b; color: #fff; font-size: 9px; font-weight: 700; padding: 4px 12px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 10px; }}
+  .body {{ padding: 24px 28px; }}
+  .title {{ font-size: 15px; font-weight: 700; color: #0f172a; margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0; }}
+  .id-box {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; text-align: center; }}
+  .id-label {{ font-size: 8px; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }}
+  .id-value {{ font-size: 12px; font-weight: 700; color: #2563eb; font-family: 'Courier New', monospace; word-break: break-all; margin-top: 2px; }}
+  .section {{ margin-bottom: 14px; }}
+  .section-title {{ font-size: 9px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; margin-bottom: 6px; }}
+  .row {{ display: flex; padding: 5px 0; border-bottom: 1px solid #f1f5f9; }}
+  .row-label {{ width: 110px; font-size: 10px; color: #64748b; font-weight: 500; flex-shrink: 0; }}
+  .row-value {{ font-size: 11px; color: #1e293b; font-weight: 500; }}
+  .status-box {{ display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }}
+  .status-box.pendiente {{ background: #fffbeb; border: 1px solid #fde68a; }}
+  .status-box.revision {{ background: #eff6ff; border: 1px solid #bfdbfe; }}
+  .status-box.aprobada {{ background: #f0fdf4; border: 1px solid #bbf7d0; }}
+  .status-box.rechazada {{ background: #fef2f2; border: 1px solid #fecaca; }}
+  .status-dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
+  .status-box.pendiente .status-dot {{ background: #f59e0b; }}
+  .status-box.revision .status-dot {{ background: #3b82f6; }}
+  .status-box.aprobada .status-dot {{ background: #22c55e; }}
+  .status-box.rechazada .status-dot {{ background: #ef4444; }}
+  .status-text {{ font-size: 11px; font-weight: 600; color: #334155; }}
+  .note {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; font-size: 10px; color: #64748b; line-height: 1.5; margin-top: 16px; }}
+  .footer {{ padding: 16px 28px; text-align: center; font-size: 9px; color: #cbd5e1; border-top: 1px solid #f1f5f9; }}
+  .actions {{ padding: 16px 28px; text-align: center; border-top: 1px solid #f1f5f9; }}
+  .btn {{ display: inline-block; padding: 10px 20px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; margin: 4px; }}
+  .btn-primary {{ background: #2563eb; color: #fff; }}
+  .btn-secondary {{ background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <img src="{logo_url}" alt="Pre-Cosquín"/>
+    <h1>Festival Pre-Cosquín 2027</h1>
+    <p>Puerto Pirámides, Chubut</p>
+    <div class="badge">Inscripción Registrada</div>
+  </div>
+  <div class="body">
+    <div class="title">Constancia de Inscripción</div>
+    <div class="id-box">
+      <div class="id-label">N° de Inscripción</div>
+      <div class="id-value">{inscription_id}</div>
+    </div>
+    <div class="section">
+      <div class="section-title">Datos Personales</div>
+      <div class="row"><span class="row-label">Nombre</span><span class="row-value">{full_name}</span></div>
+      <div class="row"><span class="row-label">DNI</span><span class="row-value">{dni or '-'}</span></div>
+      <div class="row"><span class="row-label">Fecha de nacimiento</span><span class="row-value">{birth_date or '-'}</span></div>
+      <div class="row"><span class="row-label">Edad</span><span class="row-value">{age or '-'}</span></div>
+      <div class="row"><span class="row-label">Domicilio</span><span class="row-value">{address or '-'}</span></div>
+      <div class="row"><span class="row-label">Localidad</span><span class="row-value">{locality or '-'}</span></div>
+      <div class="row"><span class="row-label">Provincia</span><span class="row-value">{province or '-'}</span></div>
+      <div class="row"><span class="row-label">Teléfono</span><span class="row-value">{phone or '-'}</span></div>
+      <div class="row"><span class="row-label">Email</span><span class="row-value">{email}</span></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Participación</div>
+      <div class="row"><span class="row-label">Categoría</span><span class="row-value">{cat_label} › {subcat_label}</span></div>
+      <div class="row"><span class="row-label">Nombre artístico</span><span class="row-value">{display_name}</span></div>
+      {'<div class="row"><span class="row-label">Biografía</span><span class="row-value">' + bio[:200] + '...</span></div>' if bio else ''}
+      {themes_html}
+      {members_html}
+    </div>
+    <div class="status-box {'pendiente' if status_val == 'PENDIENTE' else 'revision' if status_val == 'EN_REVISION' else 'aprobada' if status_val == 'APROBADA' else 'rechazada'}">
+      <div class="status-dot"></div>
+      <span class="status-text">Estado: {status_val.replace('_', ' ').title()}</span>
+    </div>
+    <div class="note">
+      <strong>Nota:</strong> Tu código QR de acreditación se generará una vez que tu inscripción sea aprobada por el equipo organizador.
+    </div>
+  </div>
+  <div class="actions no-print">
+    <button class="btn btn-primary" onclick="window.print()">Imprimir / Guardar PDF</button>
+  </div>
+  <div class="footer">
+    Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut
+  </div>
+</div>
+</body>
+</html>'''
+
+    return Response(content=html, media_type="text/html; charset=utf-8")
+
+
+@router.post("/{inscription_id}/resend-constancia")
+async def resend_constancia(inscription_id: str, data: CancelRequest, db=Depends(get_db)):
+    """Public endpoint: resend constancia email after OTP verification."""
+    try:
+        existing = db.table("inscriptions").select("id, email, full_name").eq("id", inscription_id).single().execute()
+    except Exception as e:
+        logger.error("db_error", error=str(e))
+        raise HTTPException(status_code=500, detail="Error al buscar inscripción")
+
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    if existing.data["email"].lower() != data.email.lower():
+        raise HTTPException(status_code=403, detail="El email no coincide con esta inscripción")
+
+    try:
+        _send_constancia_email(existing.data)
+    except Exception as e:
+        logger.error("resend_constancia_failed", inscription_id=inscription_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Error al enviar el correo")
+
+    return {"message": "Constancia enviada correctamente"}
 
 
 @router.post("/upload/{inscription_id}")
@@ -913,6 +1492,159 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
     logger.info("confirmation_email_sent", to=email, status=result.status, message_id=result.message_id)
 
 
+def _send_update_email(inscription_data: dict):
+    """Send email when participant updates their inscription."""
+    email = inscription_data.get("email", "")
+    full_name = inscription_data.get("full_name", "")
+    inscription_id = inscription_data.get("id", "")
+
+    from app.core.config import settings
+    frontend_url = settings.FRONTEND_URL or "https://app.precosquin.com"
+    logo_url = f"{frontend_url}/assets/img/logoballena.webp" if frontend_url else ""
+
+    html_body = f'''<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9">
+<tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
+<tr><td style="background:linear-gradient(135deg,#1e40af,#3b82f6);padding:28px 32px;text-align:center">
+  <img src="{logo_url}" alt="Logo" width="40" height="40" style="display:block;margin:0 auto 10px;border-radius:8px;background:#fff;padding:3px"/>
+  <div style="font-size:20px;font-weight:800;color:#ffffff">Inscripción Actualizada</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Festival Pre-Cosquín 2027</div>
+</td></tr>
+<tr><td style="padding:28px 32px;text-align:center">
+  <div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:8px">Hola {full_name}</div>
+  <div style="font-size:13px;color:#475569;line-height:1.6;max-width:420px;margin:0 auto 16px">
+    Tu inscripción fue actualizada correctamente con los cambios que realizaste.
+  </div>
+  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;display:inline-block;margin-bottom:16px">
+    <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">N° de Inscripción</div>
+    <div style="font-size:12px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;margin-top:2px">{inscription_id}</div>
+  </div>
+  <div style="font-size:12px;color:#64748b">Si tenés consultas, escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb">info@precosquin.com</a></div>
+</td></tr>
+<tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
+  <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+</td></tr>
+</table></td></tr></table>
+</body></html>'''
+
+    email_sender = get_email_sender()
+    msg = EmailMessage(
+        to=email,
+        subject="Pre-Cosquín — Tu inscripción fue actualizada correctamente",
+        html=html_body,
+        reply_to="info@precosquin.com",
+    )
+    result = email_sender.send(msg)
+    logger.info("update_email_sent", to=email, status=result.status, message_id=result.message_id)
+
+
+def _send_cancel_email(email: str, full_name: str):
+    """Send email when participant cancels their inscription."""
+    from app.core.config import settings
+    frontend_url = settings.FRONTEND_URL or "https://app.precosquin.com"
+    logo_url = f"{frontend_url}/assets/img/logoballena.webp" if frontend_url else ""
+
+    html_body = f'''<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9">
+<tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
+<tr><td style="background:linear-gradient(135deg,#991b1b,#ef4444);padding:28px 32px;text-align:center">
+  <img src="{logo_url}" alt="Logo" width="40" height="40" style="display:block;margin:0 auto 10px;border-radius:8px;background:#fff;padding:3px"/>
+  <div style="font-size:20px;font-weight:800;color:#ffffff">Inscripción Cancelada</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Festival Pre-Cosquín 2027</div>
+</td></tr>
+<tr><td style="padding:28px 32px;text-align:center">
+  <div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:8px">Hola {full_name}</div>
+  <div style="font-size:13px;color:#475569;line-height:1.6;max-width:420px;margin:0 auto 16px">
+    Tu inscripción fue cancelada correctamente. Esta acción ya no se puede deshacer.
+  </div>
+  <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:16px">
+    Si querés participar del festival, podés realizar una nueva inscripción cuando lo desees.
+  </div>
+  <a href="{frontend_url}/inscripcion" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 24px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none">Nueva inscripción</a>
+  <div style="font-size:12px;color:#64748b;margin-top:16px">Si tenés consultas, escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb">info@precosquin.com</a></div>
+</td></tr>
+<tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
+  <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+</td></tr>
+</table></td></tr></table>
+</body></html>'''
+
+    email_sender = get_email_sender()
+    msg = EmailMessage(
+        to=email,
+        subject="Pre-Cosquín — Tu inscripción fue cancelada",
+        html=html_body,
+        reply_to="info@precosquin.com",
+    )
+    result = email_sender.send(msg)
+    logger.info("cancel_email_sent", to=email, status=result.status, message_id=result.message_id)
+
+
+def _send_constancia_email(inscription_data: dict):
+    """Send constancia email with link to download PDF."""
+    email = inscription_data.get("email", "")
+    full_name = inscription_data.get("full_name", "")
+    inscription_id = inscription_data.get("id", "")
+    category = inscription_data.get("category", "")
+    subcategory = inscription_data.get("subcategory", "")
+
+    from app.core.config import settings
+    frontend_url = settings.FRONTEND_URL or "https://app.precosquin.com"
+    logo_url = f"{frontend_url}/assets/img/logoballena.webp" if frontend_url else ""
+    constancia_url = f"{frontend_url}/inscripcion/constancia/{inscription_id}"
+
+    cat_label = "Música" if category == "musica" else "Danza" if category == "danza" else category
+    subcat_label = subcategory.replace("_", " ").title() if subcategory else "-"
+
+    html_body = f'''<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9">
+<tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
+<tr><td style="background:linear-gradient(135deg,#0f172a,#1e293b);padding:28px 32px;text-align:center">
+  <img src="{logo_url}" alt="Logo" width="40" height="40" style="display:block;margin:0 auto 10px;border-radius:8px;background:#fff;padding:3px"/>
+  <div style="font-size:20px;font-weight:800;color:#ffffff">Constancia de Inscripción</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Festival Pre-Cosquín 2027</div>
+</td></tr>
+<tr><td style="padding:28px 32px;text-align:center">
+  <div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:8px">Hola {full_name}</div>
+  <div style="font-size:13px;color:#475569;line-height:1.6;max-width:420px;margin:0 auto 16px">
+    Acá tenés tu constancia de inscripción en <strong>{cat_label} › {subcat_label}</strong>.
+  </div>
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+    <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">N° de Inscripción</div>
+    <div style="font-size:12px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;margin-top:2px">{inscription_id}</div>
+  </div>
+  <a href="{constancia_url}" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none">Ver constancia / Imprimir PDF</a>
+  <div style="font-size:12px;color:#64748b;margin-top:16px">Si tenés consultas, escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb">info@precosquin.com</a></div>
+</td></tr>
+<tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
+  <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+</td></tr>
+</table></td></tr></table>
+</body></html>'''
+
+    email_sender = get_email_sender()
+    msg = EmailMessage(
+        to=email,
+        subject="Pre-Cosquín — Tu constancia de inscripción",
+        html=html_body,
+        reply_to="info@precosquin.com",
+    )
+    result = email_sender.send(msg)
+    logger.info("constancia_email_sent", to=email, status=result.status, message_id=result.message_id)
+
+
 def _send_status_change_email(inscription_data: dict, new_status: str, reason: Optional[str] = None):
     email = inscription_data.get("email", "")
     full_name = inscription_data.get("full_name", "")
@@ -1049,3 +1781,135 @@ def _send_status_change_email(inscription_data: dict, new_status: str, reason: O
     )
     result = email_sender.send(msg)
     logger.info("status_change_email_sent", to=email, new_status=new_status, status=result.status, message_id=result.message_id)
+
+
+def _send_approval_email(inscription_data: dict, qr_code_base64: str):
+    """Send approval email with QR code embedded as CID attachment."""
+    import base64 as b64
+    from app.core.email import EmailAttachment
+    from app.core.config import settings
+
+    email = inscription_data.get("email", "")
+    full_name = inscription_data.get("full_name", "")
+    inscription_id = inscription_data.get("id", "")
+    category = inscription_data.get("category", "")
+    subcategory = inscription_data.get("subcategory", "")
+    stage_name = inscription_data.get("stage_name") or full_name
+
+    frontend_url = settings.FRONTEND_URL or "https://app.precosquin.com"
+    logo_url = f"{frontend_url}/assets/img/logoballena.webp" if frontend_url else ""
+    constancia_url = f"{frontend_url}/inscripcion/constancia/{inscription_id}"
+
+    cat_label = "Música" if category == "musica" else "Danza" if category == "danza" else category
+    subcat_label = subcategory.replace("_", " ").replace("-", " ").title() if subcategory else "-"
+
+    qr_png_bytes = b64.b64decode(qr_code_base64)
+
+    qr_section_html = f'''
+<!-- ==================== QR CODE ==================== -->
+<tr><td style="padding:24px 32px 0;text-align:center">
+  <div style="font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">Código QR de Acreditación</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:2px solid #bbf7d0;border-radius:12px">
+  <tr>
+    <td style="padding:20px;text-align:center">
+      <img src="cid:qr-precosquin-2027" alt="QR de acreditación" width="180" height="180" style="display:block;margin:0 auto;border-radius:8px" />
+      <div style="font-size:12px;color:#166534;margin-top:12px;font-weight:600">Presentá este código QR en la acreditación del festival</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">También podés ver tu constancia en: <a href="{constancia_url}" style="color:#2563eb;text-decoration:none">{constancia_url}</a></div>
+    </td>
+  </tr>
+  </table>
+</td></tr>'''
+
+    html_body = f'''<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9">
+<tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
+
+<!-- HEADER -->
+<tr><td style="background:linear-gradient(135deg,#166534,#22c55e);padding:28px 32px;text-align:center">
+  <img src="{logo_url}" alt="Logo Pre Cosquín" width="48" height="48" style="display:block;margin:0 auto 12px;border-radius:8px;background:#ffffff;padding:4px" />
+  <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:0.02em">¡Inscripción Aprobada!</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Festival Pre-Cosquín 2027 · Puerto Pirámides</div>
+</td></tr>
+
+<!-- CONGRATS -->
+<tr><td style="padding:32px 32px 0;text-align:center">
+  <div style="font-size:18px;font-weight:700;color:#166534;margin-bottom:8px">Felicitaciones, {full_name}</div>
+  <div style="font-size:13px;color:#15803d;line-height:1.6;max-width:420px;margin:0 auto">
+    Tu inscripción <strong>{cat_label} › {subcat_label}</strong> fue aprobada por nuestro equipo. 
+    A continuación encontrás tu código QR de acreditación que deberás presentar al llegar al festival.
+  </div>
+</td></tr>
+
+<!-- REGISTRATION ID -->
+<tr><td style="padding:24px 32px 0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px">
+  <tr>
+    <td style="padding:16px;text-align:center">
+      <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700;margin-bottom:4px">N° de Inscripción</div>
+      <div style="font-size:13px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;word-break:break-all">{inscription_id}</div>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+{qr_section_html}
+
+<!-- NEXT STEPS -->
+<tr><td style="padding:24px 32px 0">
+  <div style="font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">Próximos Pasos</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px">
+  <tr>
+    <td style="padding:16px">
+      <div style="font-size:12px;color:#1e3a8a;line-height:1.8">
+        <strong>1.</strong> Guardá tu código QR (también lo tenés en tu constancia online)<br/>
+        <strong>2.</strong> Presentalo en la mesa de acreditación del festival<br/>
+        <strong>3.</strong> Recibí tu credencial de artista
+      </div>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+<!-- NOTE -->
+<tr><td style="padding:20px 32px 0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
+  <tr>
+    <td style="padding:14px 16px">
+      <div style="font-size:11px;color:#475569;line-height:1.5">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb;text-decoration:none">info@precosquin.com</a></div>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+<!-- FOOTER -->
+<tr><td style="padding:24px 32px 28px;text-align:center">
+  <div style="font-size:10px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>'''
+
+    email_sender = get_email_sender()
+    msg = EmailMessage(
+        to=email,
+        subject="Pre-Cosquín — ¡Tu inscripción fue aprobada! Tu código QR de acreditación",
+        html=html_body,
+        reply_to="info@precosquin.com",
+        attachments=[
+            EmailAttachment(
+                content_id="qr-precosquin-2027",
+                filename="qr-acreditacion.png",
+                content=qr_png_bytes,
+                content_type="image/png",
+            )
+        ],
+    )
+    result = email_sender.send(msg)
+    logger.info("approval_email_sent", to=email, status=result.status, message_id=result.message_id)

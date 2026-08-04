@@ -1,11 +1,14 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 from typing import Optional, List
 import base64
 import hashlib
+import io
 import re
 from pathlib import Path
+
+from PIL import Image as PILImage
 
 from app.core.deps import require_role, CurrentUser, get_db
 from app.core.constants import UserRole
@@ -157,7 +160,10 @@ async def get_news_list(
 
 
 @router.get("/images/{filename}")
-async def get_news_image(filename: str):
+async def get_news_image(
+    filename: str,
+    w: Optional[int] = Query(None, ge=80, le=2400, description="Ancho deseado en px"),
+):
     filepath = NEWS_IMAGES_DIR / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
@@ -170,6 +176,27 @@ async def get_news_image(filename: str):
         ".webp": "image/webp",
         ".gif": "image/gif",
     }.get(ext, "application/octet-stream")
+
+    if w and ext in (".jpg", ".jpeg", ".png", ".webp"):
+        try:
+            with PILImage.open(filepath) as img:
+                orig_w, orig_h = img.size
+                if w < orig_w:
+                    ratio = w / orig_w
+                    new_h = int(orig_h * ratio)
+                    resized = img.resize((w, new_h), PILImage.LANCZOS)
+                    if resized.mode == "RGBA":
+                        resized = resized.convert("RGB")
+                    buf = io.BytesIO()
+                    resized.save(buf, format="WEBP", quality=80, method=4)
+                    buf.seek(0)
+                    return Response(
+                        content=buf.read(),
+                        media_type="image/webp",
+                        headers={"Cache-Control": "public, max-age=2592000"},
+                    )
+        except Exception:
+            pass
 
     response = FileResponse(filepath, media_type=media_type)
     response.headers.update({"Cache-Control": "public, max-age=86400"})
