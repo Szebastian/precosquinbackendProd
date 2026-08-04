@@ -6,7 +6,7 @@ from typing import Optional, List
 from app.core.deps import get_current_user, require_role, CurrentUser, get_db
 from app.core.constants import InscriptionStatus, UserRole
 from app.core.utils import exclude_none
-from app.core.email import EmailMessage, EmailAttachment, get_email_sender
+from app.core.email import EmailMessage, get_email_sender
 
 logger = structlog.get_logger(__name__)
 
@@ -234,7 +234,7 @@ async def create_inscription(inscription: InscriptionCreate, db=Depends(get_db))
         logger.error("qr_generation_failed", inscription_id=created.get("id"), error=str(e))
 
     try:
-        _send_confirmation_email(inscription, created, qr_b64)
+        _send_confirmation_email(inscription, created)
     except Exception as e:
         logger.error("confirmation_email_failed", inscription_id=created.get("id"), error=str(e))
 
@@ -533,16 +533,28 @@ async def upload_inscription_file(
     return {"path": path, "message": "Archivo subido correctamente"}
 
 
-def _send_confirmation_email(inscription: InscriptionCreate, created: dict, qr_b64: str | None = None):
-    name = inscription.full_name or inscription.first_name or inscription.email
+def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
+    from app.core.config import settings
+
+    frontend_url = settings.FRONTEND_URL or "https://app.precosquin.com"
+    logo_url = f"{frontend_url}/assets/img/logoballena.webp" if frontend_url else ""
+
+    full_name = inscription.full_name or f"{inscription.first_name or ''} {inscription.last_name or ''}".strip() or inscription.email
     email = inscription.email
-    category = inscription.category or ""
-    subcategory = inscription.subcategory or ""
+    phone = inscription.phone or "-"
+    dni = inscription.dni or "-"
+    birth_date = inscription.birth_date or "-"
+    age = f"{inscription.age} años" if inscription.age else "-"
+    address = inscription.address or "-"
+    locality = inscription.locality or "-"
+    province = inscription.province or "-"
+
     inscription_id = created.get("id", "")
     created_at = created.get("created_at", "")
 
-    cat_label = "Música" if category == "musica" else "Danza" if category == "danza" else category
-    subcat_label = subcategory.replace("_", " ").replace("-", " ").title() if subcategory else "-"
+    cat_label = "Música" if inscription.category == "musica" else "Danza" if inscription.category == "danza" else inscription.category or "-"
+    subcat_label = inscription.subcategory.replace("_", " ").replace("-", " ").title() if inscription.subcategory else "-"
+    stage_name = inscription.stage_name or "-"
 
     date_str = ""
     if created_at:
@@ -556,206 +568,346 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict, qr_b
         from datetime import datetime
         date_str = datetime.now().strftime("%d/%m/%Y")
 
-    first = inscription.first_name or ""
-    last = inscription.last_name or ""
-    full = f"{first} {last}".strip() or name
-    dni = inscription.dni or ""
-    birth = inscription.birth_date or ""
-    age = str(inscription.age) if inscription.age else "-"
-    address = inscription.address or ""
-    locality = inscription.locality or ""
-    province = inscription.province or ""
-    phone = inscription.phone or ""
-
-    qr_section = ''
-    qr_attachment = None
-    if qr_b64:
-        import base64 as _b64
-        qr_bytes = _b64.b64decode(qr_b64)
-        qr_attachment = EmailAttachment(
-            content_id="qr-precosquin-2027",
-            filename="qr-acreditacion.png",
-            content=qr_bytes,
-            content_type="image/png",
-        )
-        qr_section = (
-            '<!-- QR CODE -->\n'
-            '<tr><td style="padding:20px 32px 0;text-align:center">\n'
-            '  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">\n'
-            '  <tr>\n'
-            '    <td style="padding:20px 16px;text-align:center">\n'
-            '      <div style="font-size:9px;font-weight:700;color:#2563eb;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">C&#243;digo QR para Acreditaci&#243;n</div>\n'
-            '      <img src="cid:qr-precosquin-2027" alt="QR Acreditaci&#243;n" width="160" height="160" style="display:block;margin:0 auto;border-radius:8px;border:2px solid #e2e8f0" />\n'
-            '      <div style="font-size:10px;color:#64748b;margin-top:10px;line-height:1.4">Present&#225; este c&#243;digo QR en la acreditaci&#243;n del<br/>Festival Pre-Cosqu&#237;n 2027 &#183; Puerto Pir&#225;mides</div>\n'
-            '    </td>\n'
-            '  </tr>\n'
-            '  </table>\n'
-            '</td></tr>\n\n'
-        )
-
-    def td_label(label: str) -> str:
-        return f'<td style="padding:4px 8px 4px 0;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;white-space:nowrap;vertical-align:top">{label}</td>'
-
-    def td_value(value: str) -> str:
-        return f'<td style="padding:4px 0;font-size:12px;color:#0f172a;font-weight:500;vertical-align:top">{value or "-"}</td>'
-
-    def td_cell(value: str, bg: bool = False) -> str:
-        style = "padding:6px 10px;font-size:12px;color:#0f172a;font-weight:500;vertical-align:top"
-        if bg:
-            style += ";background:#f8fafc"
-        return f'<td style="{style}">{value or "-"}</td>'
-
-    def td_label_cell(label: str, bg: bool = False) -> str:
-        style = "padding:6px 10px;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;vertical-align:top"
-        if bg:
-            style += ";background:#f8fafc"
-        return f'<td style="{style}">{label}</td>'
-
     html_body = f'''<!DOCTYPE html>
 <html lang="es">
-<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
-<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+<title>Confirmación de Inscripción - Pre Cosquín Puerto Pirámides 2027</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;color:#0f172a">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9">
-<tr><td align="center" style="padding:32px 16px">
-<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
+<tr><td align="center" style="padding:24px 16px">
 
-<!-- HEADER -->
+<!-- Container -->
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
+
+<!-- ==================== HEADER ==================== -->
 <tr><td style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);padding:28px 32px;text-align:center">
-  <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:0.02em">Festival Pre-Cosquín 2027</div>
-  <div style="font-size:11px;color:rgba(255,255,255,0.7);margin-top:4px">Puerto Pirámides, Chubut</div>
+  <img src="{logo_url}" alt="Logo Pre Cosquín Puerto Pirámides" width="48" height="48" style="display:block;margin:0 auto 12px;border-radius:8px;background:#ffffff;padding:4px" />
+  <div style="font-size:16px;font-weight:700;color:#ffffff;letter-spacing:0.02em">Pre-Cosquín Puerto Pirámides 2027</div>
 </td></tr>
 
-<!-- TITLE + DATE -->
+<!-- ==================== SUCCESS BANNER ==================== -->
+<tr><td style="padding:32px 32px 16;text-align:center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px">
+  <tr>
+    <td style="padding:24px 24px 16;text-align:center">
+      <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMTIgMkwgNS4wNCAxMi43IDIgMTAuNDIgOS4zNCAxNS4xIDEyIDIwbjMuNjggMy42OEMxNS41IDIxIDc2LjQgMjEgNjUgMTcgNjUgMTcgMjUgMTcgMjUgMTcgMjUgMjUgMjUgMjUgMjUgMjUgMjcgMjUgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjMgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjcgMjUgMjEgMCA2IDIgMTIgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjAgMjIgPgo=" alt="Confirmado" width="60" height="60" style="display:block;margin:0 auto;border-radius:50%%;background:#dbeafe" /><br/>
+      <div style="font-size:20px;font-weight:700;color:#166534;margin:12px 0 4px">¡Inscripción recibida correctamente!</div>
+      <div style="font-size:14px;color:#15803d">Tu inscripción fue registrada y se encuentra en proceso de revisión administrativa.</div>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+  <!-- ==================== REGISTRATION SUMMARY ==================== -->
+  <tr><td style="padding:24px 32px 0">
+    <div style="font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">Resumen de Inscripción</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px">
+    <tr>
+      <td style="padding:16px;text-align:center">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Número de Inscripción</div>
+        <div style="font-size:18px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;margin-top:3px;word-break:break-all">{inscription_id}</div>
+        <div style="font-size:10px;color:#94a3b8;margin-top:4px">Guardá este número para futuras comunicaciones</div>
+      </td>
+    </tr>
+    </table>
+  </td></tr>
+
+  <!-- ==================== PARTICIPANT SUMMARY ==================== -->
+  <tr><td style="padding:8px 32px 0">
+    <div style="font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Datos del Participante</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px">
+
+    <!-- Nombre -->
+    <tr>
+      <td style="padding:12px 16px 0">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Nombre</div>
+        <div style="font-size:14px;font-weight:700;color:#1e3a8a;margin-top:2px;word-break:break-word">{full_name}</div>
+      </td>
+    </tr>
+    <!-- DNI -->
+    <tr>
+      <td style="padding:6px 16px 0">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">DNI</div>
+        <div style="font-size:14px;font-weight:500;color:#0f172a;margin-top:2px">{dni}</div>
+      </td>
+    </tr>
+    <!-- Email -->
+    <tr>
+      <td style="padding:6px 16px 0">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Email</div>
+        <div style="font-size:14px;font-weight:500;color:#0f172a;margin-top:2px;word-break:break-all">{email}</div>
+      </td>
+    </tr>
+    <!-- Teléfono -->
+    <tr>
+      <td style="padding:6px 16px 0">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Teléfono</div>
+        <div style="font-size:14px;font-weight:500;color:#0f172a;margin-top:2px">{phone}</div>
+      </td>
+    </tr>
+    <!-- Provincia -->
+    <tr>
+      <td style="padding:6px 16px 0">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Provincia</div>
+        <div style="font-size:14px;font-weight:500;color:#0f172a;margin-top:2px">{province}</div>
+      </td>
+    </tr>
+    <!-- Nombre Artístico -->
+    <tr>
+      <td style="padding:6px 16px 12px">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Nombre Artístico</div>
+        <div style="font-size:14px;font-weight:500;color:#0f172a;margin-top:2px">{stage_name}</div>
+      </td>
+    </tr>
+
+    </table>
+  </td></tr>
+
+  <!-- ==================== PARTICIPATION INFO ==================== -->
+  <tr><td style="padding:8px 32px 0">
+    <div style="font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Participación</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px">
+
+    <!-- Categoría -->
+    <tr>
+      <td style="padding:12px 16px 0">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Categoría</div>
+        <div style="font-size:14px;font-weight:700;color:#1e3a8a;margin-top:2px">{cat_label}</div>
+      </td>
+    </tr>
+    <!-- Subcategoría -->
+    <tr>
+      <td style="padding:6px 16px 12px">
+        <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Subcategoría</div>
+        <div style="font-size:14px;font-weight:700;color:#1e3a8a;margin-top:2px">{subcat_label}</div>
+      </td>
+    </tr>
+
+     </table>
+  </td></tr>
+
+<!-- ==================== STATUS CARD ==================== -->
+<tr><td style="padding:32px 32px 0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px">
+  <tr>
+    <td style="padding:24px;text-align:center">
+      <div style="font-size:9px;font-weight:700;color:#2563eb;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Estado Actual</div>
+      <div style="font-size:16px;font-weight:700;color:#166534">En espera a prueba para Precosquín Puerto Pirámides</div>
+      <div style="font-size:12px;color:#15803d;margin-top:6px">Primera etapa - tu inscripción está en proceso. Te contactaremos pronto.</div>
+      <div style="font-size:11px;color:#15803d;margin-top:8px">Tiempo estimado de revisión: 3-7 días hábiles.</div>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+<!-- ==================== TIMELINE ==================== -->
+<tr><td style="padding:32px 32px 0">
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td style="padding:4px 0;text-align:center">
+      <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Proceso de Participación</div>
+    </td>
+  </tr>
+  </table>
+
+  <!-- Step 1 (Current) -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td width="40" style="text-align:center;padding:4px 0 0">
+      <table role="presentation" width="32" height="32" cellpadding="0" cellspacing="0" style="background:#22c55e;border-radius:50%;margin:0 auto">
+      <tr><td style="text-align:center">
+        <div style="font-size:13px;font-weight:700;color:#ffffff">1</div>
+      </td></tr>
+      </table>
+    </td>
+    <td style="padding:4px 0 0">
+      <div style="font-size:13px;font-weight:700;color:#166534">Inscripción recibida</div>
+      <div style="font-size:11px;color:#475569">Tu inscripción fue registrada correctamente</div>
+    </td>
+  </tr>
+  </table>
+
+  <!-- Step 2 -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td width="40" style="text-align:center;padding:8px 0 0">
+      <table role="presentation" width="32" height="32" cellpadding="0" cellspacing="0" style="background:#e2e8f0;border-radius:50%;margin:0 auto">
+      <tr><td style="text-align:center">
+        <div style="font-size:13px;font-weight:700;color:#94a3b8">2</div>
+      </td></tr>
+      </table>
+    </td>
+    <td style="padding:8px 0 0">
+      <div style="font-size:13px;font-weight:700;color:#64748b">Revisión administrativa</div>
+      <div style="font-size:11px;color:#94a3b8">Evaluación de tu inscripción</div>
+    </td>
+  </tr>
+  </table>
+
+  <!-- Step 3 -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td width="40" style="text-align:center;padding:8px 0 0">
+      <table role="presentation" width="32" height="32" cellpadding="0" cellspacing="0" style="background:#e2e8f0;border-radius:50%;margin:0 auto">
+      <tr><td style="text-align:center">
+        <div style="font-size:13px;font-weight:700;color:#94a3b8">3</div>
+      </td></tr>
+      </table>
+    </td>
+    <td style="padding:8px 0 0">
+      <div style="font-size:13px;font-weight:700;color:#64748b">Aprobación</div>
+      <div style="font-size:11px;color:#94a3b8">Confirmación de participación</div>
+    </td>
+  </tr>
+  </table>
+
+  <!-- Step 4 -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td width="40" style="text-align:center;padding:8px 0 0">
+      <table role="presentation" width="32" height="32" cellpadding="0" cellspacing="0" style="background:#e2e8f0;border-radius:50%;margin:0 auto">
+      <tr><td style="text-align:center">
+        <div style="font-size:13px;font-weight:700;color:#94a3b8">4</div>
+      </td></tr>
+      </table>
+    </td>
+    <td style="padding:8px 0 0">
+      <div style="font-size:13px;font-weight:700;color:#64748b">Prueba</div>
+      <div style="font-size:11px;color:#94a3b8">Presentación artística</div>
+    </td>
+  </tr>
+  </table>
+
+  <!-- Step 5 -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td width="40" style="text-align:center;padding:8px 0 0">
+      <table role="presentation" width="32" height="32" cellpadding="0" cellspacing="0" style="background:#e2e8f0;border-radius:50%;margin:0 auto">
+      <tr><td style="text-align:center">
+        <div style="font-size:13px;font-weight:700;color:#94a3b8">5</div>
+      </td></tr>
+      </table>
+    </td>
+    <td style="padding:8px 0 8px">
+      <div style="font-size:13px;font-weight:700;color:#64748b">Resultados</div>
+      <div style="font-size:11px;color:#94a3b8">Comunicación de resultados</div>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+<!-- ==================== IMPORTANT INFO ==================== -->
+<tr><td style="padding:24px 32px 0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px">
+  <tr>
+    <td style="padding:20px">
+      <div style="font-size:9px;font-weight:700;color:#2563eb;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Información Importante</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="24" style="text-align:center;padding-right:8px">
+          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIgc3Ryb2tlPSIjMjU2M2ViIiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNSIgZmlsbD0ibm9uZSIiPjx0ZXh0IGQ9Ik0xMiAxN2wtNC00bDQtNGwyIDJMMTggOCI+PC90ZXh0Pjwvc3ZnPg==" alt="" width="18" height="18" style="display:block" />
+        </td>
+        <td>
+          <div style="font-size:13px;color:#1e40af;line-height:1.6"><strong>No asistas al festival todavía.</strong> Debes esperar a la aprobación oficial de tu inscripción. Te enviaremos comunicaciones a este email con los próximos pasos y tu fecha de presentación.</div>
+        </td>
+      </tr>
+      </table>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+<!-- ==================== CALL TO ACTION ==================== -->
 <tr><td style="padding:24px 32px 0;text-align:center">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <table role="presentation" cellpadding="0" cellspacing="0">
   <tr>
-    <td style="font-size:17px;font-weight:700;color:#1e3a8a;text-align:center">Constancia de Inscripción</td>
-  </tr>
-  <tr>
-    <td style="font-size:11px;color:#94a3b8;text-align:center;padding-top:4px">Fecha de registro: {date_str}</td>
-  </tr>
-  </table>
-</td></tr>
-
-<!-- INSCRIPTION ID -->
-<tr><td style="padding:20px 32px 0">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px">
-  <tr>
-    <td style="padding:12px 16px;text-align:center">
-      <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">N° de Inscripción</div>
-      <div style="font-size:13px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;margin-top:3px;word-break:break-all">{inscription_id}</div>
+    <td align="center" bgcolor="#1e3a8a" style="border-radius:8px">
+      <a href="{frontend_url}" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border:1px solid #1e3a8a;border-radius:8px">Visitar Sitio Oficial</a>
     </td>
   </tr>
   </table>
 </td></tr>
 
-{qr_section}
-<!-- DIVIDER -->
-<tr><td style="padding:20px 32px 0"><div style="border-top:1px solid #e2e8f0"></div></td></tr>
-
-<!-- DATOS PERSONALES -->
-<tr><td style="padding:16px 32px 0">
-  <div style="font-size:9px;font-weight:700;color:#2563eb;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">Datos Personales</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-  <tr>{td_label("Nombre")}{td_value(full)}</tr>
-  </table>
-</td></tr>
-
-<tr><td style="padding:8px 32px 0">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<!-- ==================== CONTACT ==================== -->
+<tr><td style="padding:32px 32px 0">
+  <div style="font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">¿Necesitás ayuda?</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
   <tr>
-    {td_label_cell("DNI")}
-    {td_cell(dni, True)}
-    {td_label_cell("Nacimiento")}
-    {td_cell(birth)}
-    {td_label_cell("Edad")}
-    {td_cell(age + " años" if age != "-" else "-", True)}
-  </tr>
-  </table>
-</td></tr>
+    <td style="padding:16px">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
 
-<tr><td style="padding:8px 32px 0">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    {td_label_cell("Domicilio")}
-    {td_cell(address, True)}
-    {td_label_cell("Localidad")}
-    {td_cell(locality)}
-    {td_label_cell("Provincia")}
-    {td_cell(province, True)}
-  </tr>
-  </table>
-</td></tr>
+      <!-- Email -->
+      <tr>
+        <td width="24" valign="top" style="padding-right:12px">
+          <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMTkuIDlINmMwLTEuNjUgMC0zIC4zNC0zLjUgMy4xNS0zLjUgNi44NS0zLjUgMTAuMDUgMCAzLjY2LjUgMy4zNCAzLjUiIHN0cm9rZT0iIzY0NzQ4YiIgc3Ryb2tlLXdpZHRoPSIyIiBvcGVuPSJub25lIj48L3BhdGg+PGxyIGQ9Ik0xOSA5bC04LjUgNi41TDMgOW0xLjUgMS41aDExLjI1IiI+PC9sciI+PC9zdmc+" alt="" width="18" height="18" style="display:inline-block" />
+        </td>
+        <td style="padding-top:0">
+          <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Email</div>
+          <a href="mailto:info@precosquin.com" style="font-size:13px;color:#1e3a8a;font-weight:500;text-decoration:none">info@precosquin.com</a>
+        </td>
+      </tr>
 
-<tr><td style="padding:8px 32px 0">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    {td_label_cell("Teléfono")}
-    {td_cell(phone, True)}
-    {td_label_cell("Email")}
-    <td colspan="2" style="padding:6px 10px;font-size:12px;color:#0f172a;font-weight:500;vertical-align:top;word-break:break-all">{email}</td>
-  </tr>
-  </table>
-</td></tr>
+      <!-- WhatsApp -->
+      <tr><td colspan="2" style="padding:8px 0 0">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td width="24" valign="top" style="padding-right:12px">
+            <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjAgM2gtLjM5Yy0zLjE3LS42NS02LjQ3LS45Ny05LjgxLS45Ny0zLjU2IDAtNy4wMS44NC0xMC4xNiAyLjQ2QSMTkuNjUgMTkuNjUgMCAwIDAgMCAyLjUgMT0zLjM4VjVoMmg2VjMuNDVDMTQuNzkgMS42NSAxMC40IDIgNy4xNSA1LjM5IDIuNTcgOC4zMS40IDEyLjY5LjQ2IDE3LjExLjU1IDIxLjg0bC0xLjI1IDEuMjVjLS44Mi44MS0xLjgzIDEuNjgtMi42IDEuNThhNi4xMiA2LjEyIDAgMCAxLTEuNTktLjI4bC0zLjM3LS44NGExLjQ0IDEuNDQgMCAwIDAtMS42OS0xLjE2bC0yLjI3LTEuNWMtLjU4LS4zNS0xLjAyLS4xOC0xLjA4LjI4LS4wMTEuNTguLjY5IDEuOTYuNiAxLjQxbC0xLjExLjczYTEuNDMgMS40MyAwIDAgMCAwLTEuODN2LTIuNzhhLjczLjczIDAgMCAxIC44OC0uNjRjLjM0LjMxLjY4LjcxLjkyIDEuMDguMTguMTYuMjcuNDMuMzguNThhLjU3LjU3IDAgMCAwIC4xLjY4SDV2LTNIM2E1LjUgNSAwIDAgMCAwLTUtLjA3VjJoNnoiIGZpbGw9IiM2NDc0OGIiPjwvcGF0aD48L3N2Zz==" alt="" width="18" height="18" style="display:inline-block" />
+          </td>
+          <td style="padding-top:0">
+            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700">WhatsApp</div>
+            <a href="https://wa.me/5492801234567" style="font-size:13px;color:#1e3a8a;font-weight:500;text-decoration:none">+54 9 280 123-4567</a>
+          </td>
+        </tr>
+        </table>
+      </td></tr>
 
-<!-- DIVIDER -->
-<tr><td style="padding:20px 32px 0"><div style="border-top:1px solid #e2e8f0"></div></td></tr>
+      <!-- Website -->
+      <tr><td colspan="2" style="padding:8px 0 0">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td width="24" valign="top" style="padding-right:12px">
+            <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjIgMTF2NGE1LjUgNSAwIDAgIDEtNSA1SDlhNS41IDUuNSAwIDAgIDEtNS01VjdhNS41IDUuNSAwIDAgIDEgNS01aDZhMyA0IDAgMCAwIDAgNHY5IiI+PC9wYXRoPjwvc3ZnPg==" alt="" width="18" height="18" style="display:inline-block" />
+          </td>
+          <td style="padding-top:0">
+            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Sitio Web</div>
+            <a href="{frontend_url}" style="font-size:13px;color:#1e3a8a;font-weight:500;text-decoration:none">www.precosquin.com</a>
+          </td>
+        </tr>
+        </table>
+      </td></tr>
 
-<!-- PARTICIPACIÓN -->
-<tr><td style="padding:16px 32px 0">
-  <div style="font-size:9px;font-weight:700;color:#2563eb;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px">Participación</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    {td_label_cell("Categoría")}
-    <td style="padding:6px 10px;font-size:13px;color:#1e3a8a;font-weight:700;vertical-align:top">{cat_label}</td>
-    {td_label_cell("Subcategoría")}
-    <td style="padding:6px 10px;font-size:13px;color:#1e3a8a;font-weight:700;vertical-align:top">{subcat_label}</td>
-  </tr>
-  </table>
-</td></tr>
-
-<!-- STATUS -->
-<tr><td style="padding:20px 32px 0">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px">
-  <tr>
-    <td style="padding:14px 16px;text-align:center">
-      <div style="font-size:13px;font-weight:700;color:#166534">Estado: PENDIENTE</div>
-      <div style="font-size:11px;color:#15803d;margin-top:4px">Nuestro equipo revisará tu inscripción y te contactaremos pronto.</div>
+      </table>
     </td>
   </tr>
   </table>
 </td></tr>
 
-<!-- NOTE -->
-<tr><td style="padding:12px 32px 0">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px">
-  <tr>
-    <td style="padding:12px 16px">
-      <div style="font-size:11px;color:#92400e;line-height:1.5">Conservá este correo como comprobante de tu registro.</div>
-    </td>
-  </tr>
-  </table>
-</td></tr>
-
-<!-- FOOTER -->
-<tr><td style="padding:24px 32px 28px;text-align:center">
-  <div style="font-size:11px;color:#94a3b8;line-height:1.6">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb;text-decoration:none">info@precosquin.com</a></div>
-  <div style="font-size:10px;color:#cbd5e1;margin-top:6px">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+<!-- ==================== FOOTER ==================== -->
+<tr><td style="padding:28px 32px 24;text-align:center;border-top:1px solid #e2e8f0">
+  <div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:6px">Precosquin — Organización Cultural precosquin@gmail.com</div>
+  <div style="font-size:10px;color:#cbd5e1">Festival Provincial de Folklore · Puerto Pirámides, Chubut · 2027</div>
 </td></tr>
 
 </table>
 </td></tr>
 </table>
+
 </body>
 </html>'''
 
     email_sender = get_email_sender()
     msg = EmailMessage(
         to=email,
-        subject="Pre-Cosquín — Constancia de Inscripción",
+        subject="Pre-Cosquín Puerto Pirámides — Confirmación de Inscripción",
         html=html_body,
         reply_to="info@precosquin.com",
-        attachments=[qr_attachment] if qr_attachment else None,
+        attachments=None,
     )
     result = email_sender.send(msg)
     logger.info("confirmation_email_sent", to=email, status=result.status, message_id=result.message_id)
