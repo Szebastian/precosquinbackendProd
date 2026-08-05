@@ -391,6 +391,11 @@ async def delete_inscription(
     participant_name = result.data[0].get("full_name", "desconocido")
 
     try:
+        db.table("inscription_audit").delete().eq("inscription_id", inscription_id).execute()
+    except Exception as e:
+        logger.error("Error deleting audit record", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+
+    try:
         del_result = db.table("inscriptions").delete().eq("id", inscription_id).execute()
         verify = db.table("inscriptions").select("id").eq("id", inscription_id).execute()
         if verify.data:
@@ -651,6 +656,11 @@ async def bulk_delete_inscriptions(
 
     if not found_ids:
         raise HTTPException(status_code=404, detail="Ninguna inscripción encontrada")
+
+    try:
+        db.table("inscription_audit").delete().in_("inscription_id", found_ids).execute()
+    except Exception as e:
+        logger.error("Error deleting audit records for bulk delete", ids=found_ids, error=str(e), user_id=current_user.id)
 
     try:
         db.table("inscriptions").delete().in_("id", found_ids).execute()
@@ -1427,7 +1437,7 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
         </td>
         <td style="padding-top:0">
           <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Email</div>
-          <a href="mailto:info@precosquin.com" style="font-size:13px;color:#1e3a8a;font-weight:500;text-decoration:none">info@precosquin.com</a>
+          <a href="mailto:info@precosquinpiramides.com" style="font-size:13px;color:#1e3a8a;font-weight:500;text-decoration:none">info@precosquinpiramides.com</a>
         </td>
       </tr>
 
@@ -1455,7 +1465,7 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
           </td>
           <td style="padding-top:0">
             <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Sitio Web</div>
-            <a href="{frontend_url}" style="font-size:13px;color:#1e3a8a;font-weight:500;text-decoration:none">www.precosquin.com</a>
+            <a href="{frontend_url}" style="font-size:13px;color:#1e3a8a;font-weight:500;text-decoration:none">www.precosquinpiramides.com</a>
           </td>
         </tr>
         </table>
@@ -1469,7 +1479,7 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
 
 <!-- ==================== FOOTER ==================== -->
 <tr><td style="padding:28px 32px 24;text-align:center;border-top:1px solid #e2e8f0">
-  <div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:6px">Precosquin — Organización Cultural precosquin@gmail.com</div>
+  <div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:6px">Precosquin — Organización Cultural info@precosquinpiramides.com</div>
   <div style="font-size:10px;color:#cbd5e1">Festival Provincial de Folklore · Puerto Pirámides, Chubut · 2027</div>
 </td></tr>
 
@@ -1485,7 +1495,7 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
         to=email,
         subject="Pre-Cosquín Puerto Pirámides — Confirmación de Inscripción",
         html=html_body,
-        reply_to="info@precosquin.com",
+        reply_to="info@precosquinpiramides.com",
         attachments=None,
     )
     result = email_sender.send(msg)
@@ -1523,7 +1533,7 @@ def _send_update_email(inscription_data: dict):
     <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;font-weight:700">N° de Inscripción</div>
     <div style="font-size:12px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;margin-top:2px">{inscription_id}</div>
   </div>
-  <div style="font-size:12px;color:#64748b">Si tenés consultas, escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb">info@precosquin.com</a></div>
+  <div style="font-size:12px;color:#64748b">Si tenés consultas, escribinos a <a href="mailto:info@precosquinpiramides.com" style="color:#2563eb">info@precosquinpiramides.com</a></div>
 </td></tr>
 <tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
   <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
@@ -1536,7 +1546,7 @@ def _send_update_email(inscription_data: dict):
         to=email,
         subject="Pre-Cosquín — Tu inscripción fue actualizada correctamente",
         html=html_body,
-        reply_to="info@precosquin.com",
+        reply_to="info@precosquinpiramides.com",
     )
     result = email_sender.send(msg)
     logger.info("update_email_sent", to=email, status=result.status, message_id=result.message_id)
@@ -1569,7 +1579,7 @@ def _send_cancel_email(email: str, full_name: str):
     Si querés participar del festival, podés realizar una nueva inscripción cuando lo desees.
   </div>
   <a href="{frontend_url}/inscripcion" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 24px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none">Nueva inscripción</a>
-  <div style="font-size:12px;color:#64748b;margin-top:16px">Si tenés consultas, escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb">info@precosquin.com</a></div>
+  <div style="font-size:12px;color:#64748b;margin-top:16px">Si tenés consultas, escribinos a <a href="mailto:info@precosquinpiramides.com" style="color:#2563eb">info@precosquinpiramides.com</a></div>
 </td></tr>
 <tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
   <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
@@ -1582,7 +1592,7 @@ def _send_cancel_email(email: str, full_name: str):
         to=email,
         subject="Pre-Cosquín — Tu inscripción fue cancelada",
         html=html_body,
-        reply_to="info@precosquin.com",
+        reply_to="info@precosquinpiramides.com",
     )
     result = email_sender.send(msg)
     logger.info("cancel_email_sent", to=email, status=result.status, message_id=result.message_id)
@@ -1626,7 +1636,7 @@ def _send_constancia_email(inscription_data: dict):
     <div style="font-size:12px;font-weight:700;color:#2563eb;font-family:'Courier New',monospace;margin-top:2px">{inscription_id}</div>
   </div>
   <a href="{constancia_url}" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none">Ver constancia / Imprimir PDF</a>
-  <div style="font-size:12px;color:#64748b;margin-top:16px">Si tenés consultas, escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb">info@precosquin.com</a></div>
+  <div style="font-size:12px;color:#64748b;margin-top:16px">Si tenés consultas, escribinos a <a href="mailto:info@precosquinpiramides.com" style="color:#2563eb">info@precosquinpiramides.com</a></div>
 </td></tr>
 <tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
   <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
@@ -1639,7 +1649,7 @@ def _send_constancia_email(inscription_data: dict):
         to=email,
         subject="Pre-Cosquín — Tu constancia de inscripción",
         html=html_body,
-        reply_to="info@precosquin.com",
+        reply_to="info@precosquinpiramides.com",
     )
     result = email_sender.send(msg)
     logger.info("constancia_email_sent", to=email, status=result.status, message_id=result.message_id)
@@ -1755,7 +1765,7 @@ def _send_status_change_email(inscription_data: dict, new_status: str, reason: O
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
   <tr>
     <td style="padding:14px 16px">
-      <div style="font-size:11px;color:#475569;line-height:1.5">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb;text-decoration:none">info@precosquin.com</a></div>
+      <div style="font-size:11px;color:#475569;line-height:1.5">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquinpiramides.com" style="color:#2563eb;text-decoration:none">info@precosquinpiramides.com</a></div>
     </td>
   </tr>
   </table>
@@ -1777,7 +1787,7 @@ def _send_status_change_email(inscription_data: dict, new_status: str, reason: O
         to=email,
         subject=config["subject"],
         html=html_body,
-        reply_to="info@precosquin.com",
+        reply_to="info@precosquinpiramides.com",
     )
     result = email_sender.send(msg)
     logger.info("status_change_email_sent", to=email, new_status=new_status, status=result.status, message_id=result.message_id)
@@ -1879,7 +1889,7 @@ def _send_approval_email(inscription_data: dict, qr_code_base64: str):
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
   <tr>
     <td style="padding:14px 16px">
-      <div style="font-size:11px;color:#475569;line-height:1.5">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquin.com" style="color:#2563eb;text-decoration:none">info@precosquin.com</a></div>
+      <div style="font-size:11px;color:#475569;line-height:1.5">Si tenés consultas, respondé a este correo o escribinos a <a href="mailto:info@precosquinpiramides.com" style="color:#2563eb;text-decoration:none">info@precosquinpiramides.com</a></div>
     </td>
   </tr>
   </table>
@@ -1901,7 +1911,7 @@ def _send_approval_email(inscription_data: dict, qr_code_base64: str):
         to=email,
         subject="Pre-Cosquín — ¡Tu inscripción fue aprobada! Tu código QR de acreditación",
         html=html_body,
-        reply_to="info@precosquin.com",
+        reply_to="info@precosquinpiramides.com",
         attachments=[
             EmailAttachment(
                 content_id="qr-precosquin-2027",

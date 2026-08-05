@@ -47,12 +47,12 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     SENDGRID_API_KEY: str = ""
-    SENDGRID_FROM_EMAIL: str = "noreply@precosquin.com"
-    SENDGRID_FROM_NAME: str = "Precosquin"
+    SENDGRID_FROM_EMAIL: str = "info@precosquinpiramides.com"
+    SENDGRID_FROM_NAME: str = "Pre-Cosquín Puerto Pirámides"
 
     RESEND_API_KEY: str = ""
-    RESEND_FROM_EMAIL: str = "noreply@precosquin.com"
-    RESEND_FROM_NAME: str = "Precosquin"
+    RESEND_FROM_EMAIL: str = "noreply@contacto.precosquinpiramides.com"
+    RESEND_FROM_NAME: str = "Pre-Cosquín Puerto Pirámides"
 
     WHATSAPP_ACCESS_TOKEN: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""

@@ -193,7 +193,7 @@ def _send_auto_reply(from_raw: str, email_from: str, subject: str, message_text:
         to=email_from,
         subject=auto_subject,
         html=html_body,
-        reply_to="admin@precosquinpiramides.com",
+        reply_to="info@precosquinpiramides.com",
     )
     result = email_sender.send(email_msg)
     logger.info("auto_reply_sent", to=email_from, subject=auto_subject, status=result.status)

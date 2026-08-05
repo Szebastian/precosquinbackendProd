@@ -173,7 +173,7 @@ Este mensaje fue enviado desde el panel de administración de Precosquin Puerto 
             to=reply.to,
             subject=reply.subject or f"Re: {reply.subject}",
             html=html_reply,
-            reply_to="admin@precosquinpiramides.com",
+            reply_to="info@precosquinpiramides.com",
         )
         result = sender.send(email_msg)
     except Exception as e:
@@ -185,7 +185,7 @@ Este mensaje fue enviado desde el panel de administración de Precosquin Puerto 
 
     insert_data = {
         "name": "Admin",
-        "email": "admin@precosquinpiramides.com",
+        "email": "info@precosquinpiramides.com",
         "phone": None,
         "subject": f"Re: {reply.subject}",
         "message": reply.body,
@@ -255,10 +255,10 @@ def _send_message_to_admin(msg: MessageCreate):
 
     email_sender = get_email_sender()
     email_msg = EmailMessage(
-        to="info@precosquin.com",
+        to="info@precosquinpiramides.com",
         subject=f"[Precosquin] {msg.subject}",
         html=html_body,
         reply_to=msg.email,
     )
     result = email_sender.send(email_msg)
-    logger.info("admin_notification_sent", to="info@precosquin.com", from_email=msg.email, status=result.status)
+    logger.info("admin_notification_sent", to="info@precosquinpiramides.com", from_email=msg.email, status=result.status)
