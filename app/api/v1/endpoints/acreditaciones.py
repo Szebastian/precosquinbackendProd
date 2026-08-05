@@ -59,6 +59,12 @@ class CheckInResult(BaseModel):
     message: str
 
 
+def _normalize_status(db_status: str) -> str:
+    """Map DB status (PENDIENTE/ACREDITADO) to frontend status (pending/accredited)."""
+    mapping = {"PENDIENTE": "pending", "ACREDITADO": "accredited", "BLOQUEADO": "blocked"}
+    return mapping.get(db_status, db_status.lower() if db_status else "pending")
+
+
 def _map_participant(row: dict, inscription: dict = None) -> CheckInParticipant:
     """Map a DB row + inscription data to CheckInParticipant."""
     ins = inscription or {}
@@ -80,7 +86,7 @@ def _map_participant(row: dict, inscription: dict = None) -> CheckInParticipant:
         presentationOrder=0,
         stage="",
         memberCount=len(ins.get("members") or []),
-        status=row.get("status", "PENDIENTE"),
+        status=_normalize_status(row.get("status", "PENDIENTE")),
         photoUrl=None,
         accreditedAt=row.get("accredited_at"),
         accreditedBy=row.get("accredited_by"),
@@ -135,11 +141,30 @@ async def checkin_by_qr(
         if acc.get("status") == "ACREDITADO":
             return CheckInResult(type="already_accredited", message="Este participante ya fue acreditado")
 
-        # Map existing acreditacion row
-        participant = _map_participant(acc, ins)
-        return CheckInResult(type="found", participant=participant, message="Participante encontrado")
+        # Auto-accredit existing pending record
+        from datetime import datetime
+        try:
+            db.table("acreditaciones").update({
+                "status": "ACREDITADO",
+                "accredited_at": datetime.utcnow().isoformat(),
+                "accredited_by": str(current_user.id),
+                "checkin_method": "qr",
+            }).eq("id", acc["id"]).execute()
+        except Exception as e:
+            logger.error("db_update_error", error=str(e))
 
-    # Create acreditacion record
+        # Update inscription status
+        try:
+            db.table("inscriptions").update({"status": "ACREDITADO"}).eq("id", inscription_id).execute()
+        except Exception as e:
+            logger.warning("inscription_status_update_failed", error=str(e))
+
+        participant = _map_participant({**acc, "status": "ACREDITADO", "accredited_at": datetime.utcnow().isoformat()}, ins)
+        return CheckInResult(type="found", participant=participant, message="Participante acreditado")
+
+    # Create acreditacion record — auto-accredited
+    from datetime import datetime
+    now = datetime.utcnow().isoformat()
     try:
         acc_result = db.table("acreditaciones").insert({
             "inscription_id": inscription_id,
@@ -148,7 +173,9 @@ async def checkin_by_qr(
             "category": ins.get("category"),
             "subcategory": ins.get("subcategory"),
             "stage_name": ins.get("stage_name"),
-            "status": "PENDIENTE",
+            "status": "ACREDITADO",
+            "accredited_at": now,
+            "accredited_by": str(current_user.id),
             "checkin_method": "qr",
         }).execute()
     except Exception as e:
@@ -159,20 +186,27 @@ async def checkin_by_qr(
         raise HTTPException(status_code=500, detail="Error al crear acreditación")
 
     acc = acc_result.data[0]
+
+    # Update inscription status
+    try:
+        db.table("inscriptions").update({"status": "ACREDITADO"}).eq("id", inscription_id).execute()
+    except Exception as e:
+        logger.warning("inscription_status_update_failed", error=str(e))
+
     participant = _map_participant(acc, ins)
 
     # Audit log
     try:
         db.table("acreditacion_audit").insert({
             "acreditacion_id": acc["id"],
-            "action": "checkin",
+            "action": "accredit",
             "performed_by": current_user.id,
-            "details": {"method": "qr", "qr_data": payload},
+            "details": {"method": "qr", "auto": True},
         }).execute()
     except Exception as e:
         logger.error("audit_log_error", error=str(e))
 
-    return CheckInResult(type="found", participant=participant, message="Participante encontrado")
+    return CheckInResult(type="found", participant=participant, message="Participante acreditado")
 
 
 # ── Check-in by DNI ───────────────────────────────────────────────
@@ -210,10 +244,31 @@ async def checkin_by_dni(
         acc = existing.data[0]
         if acc.get("status") == "ACREDITADO":
             return CheckInResult(type="already_accredited", message="Este participante ya fue acreditado")
-        participant = _map_participant(acc, ins)
-        return CheckInResult(type="found", participant=participant, message="Participante encontrado")
 
-    # Create acreditacion record
+        # Auto-accredit existing pending record
+        from datetime import datetime
+        try:
+            db.table("acreditaciones").update({
+                "status": "ACREDITADO",
+                "accredited_at": datetime.utcnow().isoformat(),
+                "accredited_by": str(current_user.id),
+                "checkin_method": "dni",
+            }).eq("id", acc["id"]).execute()
+        except Exception as e:
+            logger.error("db_update_error", error=str(e))
+
+        # Update inscription status
+        try:
+            db.table("inscriptions").update({"status": "ACREDITADO"}).eq("id", ins["id"]).execute()
+        except Exception as e:
+            logger.warning("inscription_status_update_failed", error=str(e))
+
+        participant = _map_participant({**acc, "status": "ACREDITADO", "accredited_at": datetime.utcnow().isoformat()}, ins)
+        return CheckInResult(type="found", participant=participant, message="Participante acreditado")
+
+    # Create acreditacion record — auto-accredited
+    from datetime import datetime
+    now = datetime.utcnow().isoformat()
     try:
         acc_result = db.table("acreditaciones").insert({
             "inscription_id": ins["id"],
@@ -222,7 +277,9 @@ async def checkin_by_dni(
             "category": ins.get("category"),
             "subcategory": ins.get("subcategory"),
             "stage_name": ins.get("stage_name"),
-            "status": "PENDIENTE",
+            "status": "ACREDITADO",
+            "accredited_at": now,
+            "accredited_by": str(current_user.id),
             "checkin_method": "dni",
         }).execute()
     except Exception as e:
@@ -233,19 +290,26 @@ async def checkin_by_dni(
         raise HTTPException(status_code=500, detail="Error al crear acreditación")
 
     acc = acc_result.data[0]
+
+    # Update inscription status
+    try:
+        db.table("inscriptions").update({"status": "ACREDITADO"}).eq("id", ins["id"]).execute()
+    except Exception as e:
+        logger.warning("inscription_status_update_failed", error=str(e))
+
     participant = _map_participant(acc, ins)
 
     try:
         db.table("acreditacion_audit").insert({
             "acreditacion_id": acc["id"],
-            "action": "checkin",
+            "action": "accredit",
             "performed_by": current_user.id,
-            "details": {"method": "dni", "dni": dni_clean},
+            "details": {"method": "dni", "auto": True},
         }).execute()
     except Exception as e:
         logger.error("audit_log_error", error=str(e))
 
-    return CheckInResult(type="found", participant=participant, message="Participante encontrado")
+    return CheckInResult(type="found", participant=participant, message="Participante acreditado")
 
 
 # ── Accredit ──────────────────────────────────────────────────────
@@ -268,7 +332,7 @@ async def accredit_participant(
 
     acc = result.data[0]
     if acc.get("status") == "ACREDITADO":
-        raise HTTPException(status_code=400, detail="Ya está acreditado")
+        return {"message": "Ya estaba acreditado", "id": acreditacion_id, "already": True}
 
     try:
         db.table("acreditaciones").update({

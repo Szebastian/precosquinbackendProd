@@ -390,10 +390,13 @@ async def delete_inscription(
 
     participant_name = result.data[0].get("full_name", "desconocido")
 
-    try:
-        db.table("inscription_audit").delete().eq("inscription_id", inscription_id).execute()
-    except Exception as e:
-        logger.error("Error deleting audit record", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+    # Delete from all child tables first to avoid FK violations
+    child_tables = ["inscription_audit", "constancia_requests"]
+    for table in child_tables:
+        try:
+            db.table(table).delete().eq("inscription_id", inscription_id).execute()
+        except Exception as e:
+            logger.warning("Child table delete skipped (non-blocking)", table=table, inscription_id=inscription_id, error=str(e), user_id=current_user.id)
 
     try:
         del_result = db.table("inscriptions").delete().eq("id", inscription_id).execute()
@@ -657,16 +660,22 @@ async def bulk_delete_inscriptions(
     if not found_ids:
         raise HTTPException(status_code=404, detail="Ninguna inscripción encontrada")
 
-    try:
-        db.table("inscription_audit").delete().in_("inscription_id", found_ids).execute()
-    except Exception as e:
-        logger.error("Error deleting audit records for bulk delete", ids=found_ids, error=str(e), user_id=current_user.id)
+    # Delete from all child tables first to avoid FK violations
+    child_tables = ["inscription_audit", "constancia_requests"]
+    for table in child_tables:
+        try:
+            db.table(table).delete().in_("inscription_id", found_ids).execute()
+        except Exception as e:
+            logger.warning("Child table delete skipped (non-blocking)", table=table, ids=found_ids, error=str(e), user_id=current_user.id)
 
     try:
         db.table("inscriptions").delete().in_("id", found_ids).execute()
     except Exception as e:
-        logger.error("Error bulk deleting inscriptions", ids=found_ids, error=str(e), user_id=current_user.id)
-        raise HTTPException(status_code=500, detail=f"Error al eliminar inscripciones: {str(e)}")
+        error_detail = str(e)
+        logger.error("Error bulk deleting inscriptions", ids=found_ids, error=error_detail, user_id=current_user.id)
+        if "foreign key" in error_detail.lower() or "violates" in error_detail.lower():
+            raise HTTPException(status_code=500, detail=f"Error de integridad referencial. Tabla hija bloquea la eliminación: {error_detail}")
+        raise HTTPException(status_code=500, detail=f"Error al eliminar inscripciones: {error_detail}")
 
     logger.info("Bulk delete inscriptions", count=len(found_ids), user_id=current_user.id)
 
@@ -1823,7 +1832,7 @@ def _send_approval_email(inscription_data: dict, qr_code_base64: str):
   <tr>
     <td style="padding:20px;text-align:center">
       <img src="cid:qr-precosquin-2027" alt="QR de acreditación" width="180" height="180" style="display:block;margin:0 auto;border-radius:8px" />
-      <div style="font-size:12px;color:#166534;margin-top:12px;font-weight:600">Presentá este código QR en la acreditación del festival</div>
+      <div style="font-size:12px;color:#166534;margin-top:12px;font-weight:600">Presentá este código QR en la acreditación</div>
       <div style="font-size:10px;color:#64748b;margin-top:4px">También podés ver tu constancia en: <a href="{constancia_url}" style="color:#2563eb;text-decoration:none">{constancia_url}</a></div>
     </td>
   </tr>
@@ -1842,7 +1851,7 @@ def _send_approval_email(inscription_data: dict, qr_code_base64: str):
 <tr><td style="background:linear-gradient(135deg,#166534,#22c55e);padding:28px 32px;text-align:center">
   <img src="{logo_url}" alt="Logo Pre Cosquín" width="48" height="48" style="display:block;margin:0 auto 12px;border-radius:8px;background:#ffffff;padding:4px" />
   <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:0.02em">¡Inscripción Aprobada!</div>
-  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Festival Pre-Cosquín 2027 · Puerto Pirámides</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Pre-Cosquín 2027 · Puerto Pirámides</div>
 </td></tr>
 
 <!-- CONGRATS -->
@@ -1850,7 +1859,7 @@ def _send_approval_email(inscription_data: dict, qr_code_base64: str):
   <div style="font-size:18px;font-weight:700;color:#166534;margin-bottom:8px">Felicitaciones, {full_name}</div>
   <div style="font-size:13px;color:#15803d;line-height:1.6;max-width:420px;margin:0 auto">
     Tu inscripción <strong>{cat_label} › {subcat_label}</strong> fue aprobada por nuestro equipo. 
-    A continuación encontrás tu código QR de acreditación que deberás presentar al llegar al festival.
+    A continuación encontrás tu código QR de acreditación que deberás presentar al llegar al momento de acreditarte.
   </div>
 </td></tr>
 
@@ -1876,8 +1885,7 @@ def _send_approval_email(inscription_data: dict, qr_code_base64: str):
     <td style="padding:16px">
       <div style="font-size:12px;color:#1e3a8a;line-height:1.8">
         <strong>1.</strong> Guardá tu código QR (también lo tenés en tu constancia online)<br/>
-        <strong>2.</strong> Presentalo en la mesa de acreditación del festival<br/>
-        <strong>3.</strong> Recibí tu credencial de artista
+        <strong>2.</strong> Presentalo en la mesa de acreditación<br/>
       </div>
     </td>
   </tr>
@@ -1897,7 +1905,7 @@ def _send_approval_email(inscription_data: dict, qr_code_base64: str):
 
 <!-- FOOTER -->
 <tr><td style="padding:24px 32px 28px;text-align:center">
-  <div style="font-size:10px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+  <div style="font-size:10px;color:#cbd5e1">Precosquin · Puerto Pirámides, Chubut</div>
 </td></tr>
 
 </table>
