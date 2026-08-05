@@ -391,7 +391,7 @@ async def delete_inscription(
     participant_name = result.data[0].get("full_name", "desconocido")
 
     # Delete from all child tables first to avoid FK violations
-    child_tables = ["inscription_audit", "constancia_requests"]
+    child_tables = ["inscription_audit", "constancia_requests", "acreditaciones", "acreditacion_audit"]
     for table in child_tables:
         try:
             db.table(table).delete().eq("inscription_id", inscription_id).execute()
@@ -661,7 +661,7 @@ async def bulk_delete_inscriptions(
         raise HTTPException(status_code=404, detail="Ninguna inscripción encontrada")
 
     # Delete from all child tables first to avoid FK violations
-    child_tables = ["inscription_audit", "constancia_requests"]
+    child_tables = ["inscription_audit", "constancia_requests", "acreditaciones", "acreditacion_audit"]
     for table in child_tables:
         try:
             db.table(table).delete().in_("inscription_id", found_ids).execute()
@@ -1489,7 +1489,7 @@ def _send_confirmation_email(inscription: InscriptionCreate, created: dict):
 <!-- ==================== FOOTER ==================== -->
 <tr><td style="padding:28px 32px 24;text-align:center;border-top:1px solid #e2e8f0">
   <div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:6px">Precosquin — Organización Cultural info@precosquinpiramides.com</div>
-  <div style="font-size:10px;color:#cbd5e1">Festival Provincial de Folklore · Puerto Pirámides, Chubut · 2027</div>
+  <div style="font-size:10px;color:#cbd5e1">Puerto Pirámides, Chubut · 2027</div>
 </td></tr>
 
 </table>
@@ -1531,7 +1531,7 @@ def _send_update_email(inscription_data: dict):
 <tr><td style="background:linear-gradient(135deg,#1e40af,#3b82f6);padding:28px 32px;text-align:center">
   <img src="{logo_url}" alt="Logo" width="40" height="40" style="display:block;margin:0 auto 10px;border-radius:8px;background:#fff;padding:3px"/>
   <div style="font-size:20px;font-weight:800;color:#ffffff">Inscripción Actualizada</div>
-  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Festival Pre-Cosquín 2027</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Pre-Cosquín 2027</div>
 </td></tr>
 <tr><td style="padding:28px 32px;text-align:center">
   <div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:8px">Hola {full_name}</div>
@@ -1545,7 +1545,7 @@ def _send_update_email(inscription_data: dict):
   <div style="font-size:12px;color:#64748b">Si tenés consultas, escribinos a <a href="mailto:info@precosquinpiramides.com" style="color:#2563eb">info@precosquinpiramides.com</a></div>
 </td></tr>
 <tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
-  <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+  <div style="font-size:9px;color:#cbd5e1">Precosquin — Puerto Pirámides, Chubut</div>
 </td></tr>
 </table></td></tr></table>
 </body></html>'''
@@ -1585,13 +1585,13 @@ def _send_cancel_email(email: str, full_name: str):
     Tu inscripción fue cancelada correctamente. Esta acción ya no se puede deshacer.
   </div>
   <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:16px">
-    Si querés participar del festival, podés realizar una nueva inscripción cuando lo desees.
+    Si querés participar, podés realizar una nueva inscripción cuando lo desees.
   </div>
   <a href="{frontend_url}/inscripcion" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 24px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none">Nueva inscripción</a>
   <div style="font-size:12px;color:#64748b;margin-top:16px">Si tenés consultas, escribinos a <a href="mailto:info@precosquinpiramides.com" style="color:#2563eb">info@precosquinpiramides.com</a></div>
 </td></tr>
 <tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
-  <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+  <div style="font-size:9px;color:#cbd5e1">Precosquin — Puerto Pirámides, Chubut</div>
 </td></tr>
 </table></td></tr></table>
 </body></html>'''
@@ -1633,7 +1633,7 @@ def _send_constancia_email(inscription_data: dict):
 <tr><td style="background:linear-gradient(135deg,#0f172a,#1e293b);padding:28px 32px;text-align:center">
   <img src="{logo_url}" alt="Logo" width="40" height="40" style="display:block;margin:0 auto 10px;border-radius:8px;background:#fff;padding:3px"/>
   <div style="font-size:20px;font-weight:800;color:#ffffff">Constancia de Inscripción</div>
-  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Festival Pre-Cosquín 2027</div>
+  <div style="font-size:11px;color:rgba(255,255,255,0.8);margin-top:4px">Pre-Cosquín 2027</div>
 </td></tr>
 <tr><td style="padding:28px 32px;text-align:center">
   <div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:8px">Hola {full_name}</div>
@@ -1648,7 +1648,7 @@ def _send_constancia_email(inscription_data: dict):
   <div style="font-size:12px;color:#64748b;margin-top:16px">Si tenés consultas, escribinos a <a href="mailto:info@precosquinpiramides.com" style="color:#2563eb">info@precosquinpiramides.com</a></div>
 </td></tr>
 <tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9">
-  <div style="font-size:9px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+  <div style="font-size:9px;color:#cbd5e1">Precosquin — Puerto Pirámides, Chubut</div>
 </td></tr>
 </table></td></tr></table>
 </body></html>'''
@@ -1688,7 +1688,7 @@ def _send_status_change_email(inscription_data: dict, new_status: str, reason: O
         "APROBADA": {
             "subject": "Pre-Cosquín — ¡Tu inscripción fue aprobada!",
             "title": "¡Tu inscripción fue aprobada!",
-            "message": "Felicitaciones, tu inscripción al Festival Pre-Cosquín 2027 fue aprobada. Pronto nos contactaremos con los próximos pasos.",
+            "message": "Felicitaciones, tu inscripción al Pre-Cosquín 2027 fue aprobada. Pronto nos contactaremos con los próximos pasos.",
             "bg_color": "#f0fdf4",
             "border_color": "#bbf7d0",
             "title_color": "#166534",
@@ -1698,7 +1698,7 @@ def _send_status_change_email(inscription_data: dict, new_status: str, reason: O
         "RECHAZADA": {
             "subject": "Pre-Cosquín — Resultado de tu inscripción",
             "title": "Resultado de tu inscripción",
-            "message": "Lamentamos informarte que tu inscripción no fue aprobada en esta edición del festival.",
+            "message": "Lamentamos informarte que tu inscripción no fue aprobada en esta edición.",
             "bg_color": "#fef2f2",
             "border_color": "#fecaca",
             "title_color": "#991b1b",
@@ -1733,7 +1733,7 @@ def _send_status_change_email(inscription_data: dict, new_status: str, reason: O
 
 <!-- HEADER -->
 <tr><td style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);padding:28px 32px;text-align:center">
-  <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:0.02em">Festival Pre-Cosquín 2027</div>
+  <div style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:0.02em">Pre-Cosquín 2027</div>
   <div style="font-size:11px;color:rgba(255,255,255,0.7);margin-top:4px">Puerto Pirámides, Chubut</div>
 </td></tr>
 
@@ -1782,7 +1782,7 @@ def _send_status_change_email(inscription_data: dict, new_status: str, reason: O
 
 <!-- FOOTER -->
 <tr><td style="padding:24px 32px 28px;text-align:center">
-  <div style="font-size:10px;color:#cbd5e1">Precosquin — Festival Provincial de Folklore · Puerto Pirámides, Chubut</div>
+  <div style="font-size:10px;color:#cbd5e1">Precosquin — Puerto Pirámides, Chubut</div>
 </td></tr>
 
 </table>
@@ -1833,7 +1833,6 @@ def _send_approval_email(inscription_data: dict, qr_code_base64: str):
     <td style="padding:20px;text-align:center">
       <img src="cid:qr-precosquin-2027" alt="QR de acreditación" width="180" height="180" style="display:block;margin:0 auto;border-radius:8px" />
       <div style="font-size:12px;color:#166534;margin-top:12px;font-weight:600">Presentá este código QR en la acreditación</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">También podés ver tu constancia en: <a href="{constancia_url}" style="color:#2563eb;text-decoration:none">{constancia_url}</a></div>
     </td>
   </tr>
   </table>
