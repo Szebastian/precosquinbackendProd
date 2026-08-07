@@ -342,7 +342,7 @@ async def get_qr_image(inscription_id: str, db=Depends(get_db)):
         )
         qr_bytes = b64.b64decode(qr_b64)
         return Response(content=qr_bytes, media_type="image/png", headers={
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": "public, max-age=31536000, immutable",
             "Content-Disposition": f'inline; filename="qr-{inscription_id[:8]}.png"',
         })
     except Exception as e:

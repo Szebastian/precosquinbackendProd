@@ -68,17 +68,16 @@ def _convert_base64_to_file(base64_data: str) -> str:
     base64_str = match.group(2)
 
     data_hash = hashlib.md5(base64_str.encode()).hexdigest()
-    ext = mime_type.split("/")[-1]
-    if ext == "jpeg":
-        ext = "jpg"
-
-    filename = f"{data_hash}.{ext}"
+    filename = f"{data_hash}.webp"
     filepath = NEWS_IMAGES_DIR / filename
 
     if not filepath.exists():
         try:
             image_bytes = base64.b64decode(base64_str)
-            filepath.write_bytes(image_bytes)
+            img = PILImage.open(io.BytesIO(image_bytes))
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(filepath, "WEBP", quality=80, method=6)
         except Exception:
             return base64_data
 
@@ -193,13 +192,13 @@ async def get_news_image(
                     return Response(
                         content=buf.read(),
                         media_type="image/webp",
-                        headers={"Cache-Control": "public, max-age=2592000"},
+                         headers={"Cache-Control": "public, max-age=31536000, immutable"},
                     )
         except Exception:
             pass
 
     response = FileResponse(filepath, media_type=media_type)
-    response.headers.update({"Cache-Control": "public, max-age=86400"})
+    response.headers.update({"Cache-Control": "public, max-age=31536000, immutable"})
     return response
 
 
