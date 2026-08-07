@@ -54,7 +54,7 @@ def _ensure_bucket(supabase):
 def _upload_to_storage(supabase, filename: str, data: bytes) -> str:
     _ensure_bucket(supabase)
     supabase.storage.from_(GALLERY_BUCKET).upload(
-        filename, data, file_options={"content-type": "image/webp", "upsert": "true"}
+        filename, data, file_options={"content-type": "image/webp", "upsert": True}
     )
     return _get_public_url(supabase, filename)
 
