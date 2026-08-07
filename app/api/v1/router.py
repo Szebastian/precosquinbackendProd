@@ -19,6 +19,7 @@ from app.api.v1.endpoints import (
     email_webhook,
     cronograma,
     acreditaciones,
+    gallery,
 )
 
 api_router = APIRouter()
@@ -79,3 +80,6 @@ api_router.include_router(cronograma.router, prefix="/cronograma", tags=["Cronog
 
 # Acreditaciones
 api_router.include_router(acreditaciones.router, prefix="/acreditaciones", tags=["Acreditaciones"])
+
+# Gallery
+api_router.include_router(gallery.router, prefix="/gallery", tags=["Gallery"])
