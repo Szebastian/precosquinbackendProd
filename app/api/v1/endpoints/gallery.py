@@ -72,7 +72,7 @@ def _upload_to_storage(supabase, filename: str, data: bytes) -> str:
     logger.info("gallery_upload_start", filename=filename, size=len(data), content_type=content_type)
     try:
         supabase.storage.from_(GALLERY_BUCKET).upload(
-            filename, data, file_options={"content-type": content_type, "upsert": True}
+            filename, data, file_options={"content-type": content_type, "upsert": "true"}
         )
         url = _get_public_url(supabase, filename)
         logger.info("gallery_upload_ok", url=url)
