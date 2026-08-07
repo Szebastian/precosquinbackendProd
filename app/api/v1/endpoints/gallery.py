@@ -67,10 +67,19 @@ def _upload_to_storage(supabase, filename: str, data: bytes) -> str:
         ".png": "image/png",
         ".gif": "image/gif",
     }.get(ext, "application/octet-stream")
-    supabase.storage.from_(GALLERY_BUCKET).upload(
-        filename, data, file_options={"content-type": content_type, "upsert": True}
-    )
-    return _get_public_url(supabase, filename)
+    import structlog
+    logger = structlog.get_logger()
+    logger.info("gallery_upload_start", filename=filename, size=len(data), content_type=content_type)
+    try:
+        supabase.storage.from_(GALLERY_BUCKET).upload(
+            filename, data, file_options={"content-type": content_type, "upsert": True}
+        )
+        url = _get_public_url(supabase, filename)
+        logger.info("gallery_upload_ok", url=url)
+        return url
+    except Exception as e:
+        logger.error("gallery_upload_failed", error=str(e), filename=filename)
+        raise
 
 
 def _get_public_url(supabase, filename: str) -> str:
@@ -159,15 +168,26 @@ async def get_gallery():
 
 @router.post("/bulk", response_model=List[GalleryItemResponse])
 async def bulk_create_gallery_items(payload: GalleryBulkCreate):
+    import structlog
+    logger = structlog.get_logger()
     supabase = get_supabase()
     rows = []
     for item in payload.items:
-        db_data = _response_to_db_row(item.model_dump())
-        if _is_base64_image(db_data.get("image", "")):
-            webp_data, filename = _convert_base64_to_webp(db_data["image"])
-            if webp_data:
-                db_data["image"] = _upload_to_storage(supabase, filename, webp_data)
-        rows.append(db_data)
+        try:
+            db_data = _response_to_db_row(item.model_dump())
+            if _is_base64_image(db_data.get("image", "")):
+                webp_data, filename = _convert_base64_to_webp(db_data["image"])
+                if webp_data:
+                    db_data["image"] = _upload_to_storage(supabase, filename, webp_data)
+                else:
+                    logger.error("gallery_convert_failed", title=item.title)
+                    raise HTTPException(status_code=500, detail="Failed to convert image")
+            rows.append(db_data)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("gallery_item_error", error=str(e), title=item.title)
+            raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
     result = supabase.table("gallery_items").insert(rows).execute()
     if not result.data:
