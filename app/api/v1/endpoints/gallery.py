@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
 
@@ -14,8 +14,7 @@ from app.db.session import get_supabase
 
 router = APIRouter()
 
-GALLERY_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent.parent / "api" / "static" / "gallery"
-GALLERY_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+GALLERY_BUCKET = "gallery"
 
 
 # --- Helpers ---
@@ -24,29 +23,58 @@ def _is_base64_image(data: str) -> bool:
     return data.startswith("data:image/")
 
 
-def _convert_base64_to_file(base64_data: str) -> str:
+def _convert_base64_to_webp(base64_data: str) -> tuple[bytes, str]:
     match = re.match(r"data:(image/\w+);base64,(.+)", base64_data)
     if not match:
-        return base64_data
+        return b"", ""
 
-    mime_type = match.group(1)
     base64_str = match.group(2)
-
     data_hash = hashlib.md5(base64_str.encode()).hexdigest()
     filename = f"{data_hash}.webp"
-    filepath = GALLERY_IMAGES_DIR / filename
 
-    if not filepath.exists():
-        try:
-            image_bytes = base64.b64decode(base64_str)
-            img = Image.open(io.BytesIO(image_bytes))
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            img.save(filepath, "WEBP", quality=80, method=6)
-        except Exception:
-            return base64_data
+    try:
+        image_bytes = base64.b64decode(base64_str)
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, "WEBP", quality=80, method=6)
+        return buf.getvalue(), filename
+    except Exception:
+        return b"", ""
 
-    return f"/v1/gallery/images/{filename}"
+
+def _ensure_bucket(supabase):
+    try:
+        supabase.storage.create_bucket(GALLERY_BUCKET, options={"public": True})
+    except Exception:
+        pass
+
+
+def _upload_to_storage(supabase, filename: str, data: bytes) -> str:
+    _ensure_bucket(supabase)
+    supabase.storage.from_(GALLERY_BUCKET).upload(
+        filename, data, file_options={"content-type": "image/webp", "upsert": "true"}
+    )
+    return _get_public_url(supabase, filename)
+
+
+def _get_public_url(supabase, filename: str) -> str:
+    result = supabase.storage.from_(GALLERY_BUCKET).get_public_url(filename)
+    return result
+
+
+def _delete_from_storage(supabase, filename: str):
+    try:
+        supabase.storage.from_(GALLERY_BUCKET).remove([filename])
+    except Exception:
+        pass
+
+
+def _extract_storage_filename(image_url: str) -> str:
+    if "/gallery/" in image_url:
+        return image_url.split("/gallery/")[-1]
+    return ""
 
 
 def _db_row_to_response(row: dict) -> dict:
@@ -122,7 +150,9 @@ async def bulk_create_gallery_items(payload: GalleryBulkCreate):
     for item in payload.items:
         db_data = _response_to_db_row(item.model_dump())
         if _is_base64_image(db_data.get("image", "")):
-            db_data["image"] = _convert_base64_to_file(db_data["image"])
+            webp_data, filename = _convert_base64_to_webp(db_data["image"])
+            if webp_data:
+                db_data["image"] = _upload_to_storage(supabase, filename, webp_data)
         rows.append(db_data)
 
     result = supabase.table("gallery_items").insert(rows).execute()
@@ -150,7 +180,9 @@ async def create_gallery_item(item: GalleryItemCreate):
     supabase = get_supabase()
     db_data = _response_to_db_row(item.model_dump())
     if _is_base64_image(db_data.get("image", "")):
-        db_data["image"] = _convert_base64_to_file(db_data["image"])
+        webp_data, filename = _convert_base64_to_webp(db_data["image"])
+        if webp_data:
+            db_data["image"] = _upload_to_storage(supabase, filename, webp_data)
 
     result = supabase.table("gallery_items").insert(db_data).execute()
     if not result.data:
@@ -169,7 +201,9 @@ async def update_gallery_item(item_id: int, item: GalleryItemUpdate):
         raise HTTPException(status_code=400, detail="No fields to update")
 
     if "image" in update_data and _is_base64_image(update_data["image"]):
-        update_data["image"] = _convert_base64_to_file(update_data["image"])
+        webp_data, filename = _convert_base64_to_webp(update_data["image"])
+        if webp_data:
+            update_data["image"] = _upload_to_storage(supabase, filename, webp_data)
 
     result = (
         supabase.table("gallery_items")
@@ -185,30 +219,37 @@ async def update_gallery_item(item_id: int, item: GalleryItemUpdate):
 @router.delete("/{item_id}")
 async def delete_gallery_item(item_id: int):
     supabase = get_supabase()
+
     result = (
         supabase.table("gallery_items")
-        .delete()
+        .select("image")
         .eq("id", item_id)
         .execute()
     )
+    if result.data:
+        filename = _extract_storage_filename(result.data[0].get("image", ""))
+        if filename:
+            _delete_from_storage(supabase, filename)
+
+    supabase.table("gallery_items").delete().eq("id", item_id).execute()
     return {"message": "Gallery item deleted", "id": item_id}
 
 
 @router.get("/images/{filename}")
 async def get_gallery_image(filename: str):
-    filepath = GALLERY_IMAGES_DIR / filename
-    if not filepath.exists():
+    supabase = get_supabase()
+    try:
+        result = supabase.storage.from_(GALLERY_BUCKET).download(filename)
+        ext = Path(filename).suffix.lower()
+        media_type = {
+            ".webp": "image/webp",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".gif": "image/gif",
+        }.get(ext, "application/octet-stream")
+        response = Response(content=result, media_type=media_type)
+        response.headers.update({"Cache-Control": "public, max-age=31536000, immutable"})
+        return response
+    except Exception:
         raise HTTPException(status_code=404, detail="Image not found")
-
-    ext = filepath.suffix.lower()
-    media_type = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
-    }.get(ext, "application/octet-stream")
-
-    response = FileResponse(filepath, media_type=media_type)
-    response.headers.update({"Cache-Control": "public, max-age=31536000, immutable"})
-    return response
