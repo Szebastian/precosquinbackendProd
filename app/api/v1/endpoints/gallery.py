@@ -7,7 +7,6 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from PIL import Image
 from pydantic import BaseModel
 
 from app.db.session import get_supabase
@@ -29,19 +28,26 @@ def _convert_base64_to_webp(base64_data: str) -> tuple[bytes, str]:
         return b"", ""
 
     base64_str = match.group(2)
+    mime_ext = match.group(1).split("/")[-1]
+    if mime_ext == "jpeg":
+        mime_ext = "jpg"
     data_hash = hashlib.md5(base64_str.encode()).hexdigest()
-    filename = f"{data_hash}.webp"
 
     try:
+        from PIL import Image
         image_bytes = base64.b64decode(base64_str)
         img = Image.open(io.BytesIO(image_bytes))
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         buf = io.BytesIO()
         img.save(buf, "WEBP", quality=80, method=6)
-        return buf.getvalue(), filename
+        return buf.getvalue(), f"{data_hash}.webp"
     except Exception:
-        return b"", ""
+        try:
+            image_bytes = base64.b64decode(base64_str)
+            return image_bytes, f"{data_hash}.{mime_ext}"
+        except Exception:
+            return b"", ""
 
 
 def _ensure_bucket(supabase):
@@ -53,8 +59,16 @@ def _ensure_bucket(supabase):
 
 def _upload_to_storage(supabase, filename: str, data: bytes) -> str:
     _ensure_bucket(supabase)
+    ext = Path(filename).suffix.lower()
+    content_type = {
+        ".webp": "image/webp",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+    }.get(ext, "application/octet-stream")
     supabase.storage.from_(GALLERY_BUCKET).upload(
-        filename, data, file_options={"content-type": "image/webp", "upsert": True}
+        filename, data, file_options={"content-type": content_type, "upsert": True}
     )
     return _get_public_url(supabase, filename)
 
