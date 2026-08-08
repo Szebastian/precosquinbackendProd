@@ -391,12 +391,17 @@ async def delete_inscription(
     participant_name = result.data[0].get("full_name", "desconocido")
 
     # Delete from all child tables first to avoid FK violations
-    child_tables = ["inscription_audit", "constancia_requests", "acreditaciones", "acreditacion_audit"]
+    child_tables = ["inscription_audit", "acreditaciones", "evaluations"]
     for table in child_tables:
         try:
             db.table(table).delete().eq("inscription_id", inscription_id).execute()
         except Exception as e:
             logger.warning("Child table delete skipped (non-blocking)", table=table, inscription_id=inscription_id, error=str(e), user_id=current_user.id)
+    # documents uses artist_id (same value as inscription id)
+    try:
+        db.table("documents").delete().eq("artist_id", inscription_id).execute()
+    except Exception as e:
+        logger.warning("Child table delete skipped (non-blocking)", table="documents", inscription_id=inscription_id, error=str(e), user_id=current_user.id)
 
     try:
         del_result = db.table("inscriptions").delete().eq("id", inscription_id).execute()
@@ -661,12 +666,17 @@ async def bulk_delete_inscriptions(
         raise HTTPException(status_code=404, detail="Ninguna inscripción encontrada")
 
     # Delete from all child tables first to avoid FK violations
-    child_tables = ["inscription_audit", "constancia_requests", "acreditaciones", "acreditacion_audit"]
+    child_tables = ["inscription_audit", "acreditaciones", "evaluations"]
     for table in child_tables:
         try:
             db.table(table).delete().in_("inscription_id", found_ids).execute()
         except Exception as e:
             logger.warning("Child table delete skipped (non-blocking)", table=table, ids=found_ids, error=str(e), user_id=current_user.id)
+    # documents uses artist_id (same value as inscription id)
+    try:
+        db.table("documents").delete().in_("artist_id", found_ids).execute()
+    except Exception as e:
+        logger.warning("Child table delete skipped (non-blocking)", table="documents", ids=found_ids, error=str(e), user_id=current_user.id)
 
     try:
         db.table("inscriptions").delete().in_("id", found_ids).execute()
