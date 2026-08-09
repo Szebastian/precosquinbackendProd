@@ -13,14 +13,19 @@ PUBLIC_BUCKETS = {"logos", "inscriptions"}
 
 
 def _ensure_bucket(db, bucket: str):
-    """Create a public bucket if it doesn't exist."""
+    """Create or update bucket to be public."""
     if bucket not in PUBLIC_BUCKETS:
         return
     try:
         db.storage.create_bucket(bucket, {"public": True})
         logger.info("bucket_created", bucket=bucket)
     except Exception:
-        pass
+        # Bucket exists, try to update it to public
+        try:
+            db.storage.update_bucket(bucket, {"public": True})
+            logger.info("bucket_updated_to_public", bucket=bucket)
+        except Exception:
+            pass
 
 
 @router.post("/upload/{bucket}/{path:path}")
@@ -60,3 +65,14 @@ async def get_signed_url(
     result = db.storage.from_(bucket).create_signed_url(path, 3600)
 
     return {"signed_url": result.get("signedURL", "")}
+
+
+@router.get("/public-url/{bucket}/{path:path}")
+async def get_public_url(
+    bucket: str,
+    path: str,
+):
+    db = get_supabase()
+    _ensure_bucket(db, bucket)
+    result = db.storage.from_(bucket).get_public_url(path)
+    return {"public_url": result}

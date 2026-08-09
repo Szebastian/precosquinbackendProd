@@ -123,6 +123,11 @@ class InscriptionResponse(BaseModel):
     artistic_name: Optional[str] = None
     songs_list: Optional[str] = None
     qr_code_base64: Optional[str] = None
+    dni_front_url: Optional[str] = None
+    dni_back_url: Optional[str] = None
+    promo_photo_url: Optional[str] = None
+    lyrics_url: Optional[str] = None
+    score_url: Optional[str] = None
 
 
 class InscriptionListResponse(BaseModel):
@@ -1101,7 +1106,7 @@ async def upload_inscription_file(
 
     filename = file.filename or ""
     ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
-    path = f"inscriptions/{inscription_id}/{file_type}.{ext}"
+    path = f"{inscription_id}/{file_type}.{ext}"
 
     try:
         content = await file.read()
@@ -1109,6 +1114,13 @@ async def upload_inscription_file(
     except Exception as e:
         logger.error("Error reading uploaded file", error=str(e), file_type=file_type, filename=file.filename)
         raise HTTPException(status_code=500, detail=f"Error al leer el archivo: {str(e)}")
+
+    # Ensure the inscriptions bucket exists before uploading
+    try:
+        from app.api.v1.endpoints.storage import _ensure_bucket
+        _ensure_bucket(db, "inscriptions")
+    except Exception as e:
+        logger.warning("Could not ensure bucket exists", error=str(e))
 
     try:
         logger.info("Attempting to upload to Supabase Storage", path=path, content_type=file.content_type)
