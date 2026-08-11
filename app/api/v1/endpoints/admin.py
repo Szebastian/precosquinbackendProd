@@ -46,6 +46,48 @@ async def list_users(
     return result.data
 
 
+@router.post("/users/sync", status_code=200)
+async def sync_auth_users(
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
+):
+    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        auth_resp = await client.get(
+            f"{supabase_url}/auth/v1/admin/users",
+            headers={
+                "Authorization": f"Bearer {supabase_key}",
+                "apikey": supabase_key,
+            },
+        )
+
+    if auth_resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Error al obtener usuarios de auth")
+
+    auth_users = auth_resp.json().get("users", [])
+
+    existing = db.table("profiles").select("id").execute()
+    existing_ids = {p["id"] for p in (existing.data or [])}
+
+    synced = []
+    for u in auth_users:
+        uid = u.get("id")
+        if uid and uid not in existing_ids:
+            meta = u.get("user_metadata") or {}
+            db.table("profiles").insert({
+                "id": uid,
+                "email": u.get("email", ""),
+                "full_name": meta.get("full_name", u.get("email", "")),
+                "role": meta.get("role", "staff"),
+                "is_active": True,
+            }).execute()
+            synced.append(u.get("email"))
+
+    return {"synced": len(synced), "emails": synced}
+
+
 @router.post("/users/invite", status_code=201)
 async def invite_user(
     user: UserInvite,
@@ -177,6 +219,66 @@ async def deactivate_user(
     )
 
     return {"message": "Usuario desactivado correctamente"}
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: str,
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
+):
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="No puedes resetear tu propia contraseña desde aquí")
+
+    profile = db.table("profiles").select("id, email, full_name").eq("id", user_id).single().execute()
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    temp_password = generate_temp_password()
+
+    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            auth_resp = await client.put(
+                f"{supabase_url}/auth/v1/admin/users/{user_id}",
+                headers={
+                    "Authorization": f"Bearer {supabase_key}",
+                    "apikey": supabase_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "password": temp_password,
+                },
+            )
+
+        if auth_resp.status_code not in (200,):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al resetear contraseña en auth: {auth_resp.text}",
+            )
+
+        log_audit(
+            db=db,
+            actor_id=current_user.id,
+            action="user_password_reset",
+            target_id=user_id,
+            metadata={"email": profile.data["email"]},
+        )
+
+        return {
+            "id": user_id,
+            "email": profile.data["email"],
+            "full_name": profile.data["full_name"],
+            "temp_password": temp_password,
+            "message": f"Contraseña reseteada para {profile.data['email']}",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al resetear contraseña: {str(e)}")
 
 
 @router.get("/event-config")
