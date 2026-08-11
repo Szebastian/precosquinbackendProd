@@ -24,7 +24,6 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: str
-    role: Optional[str] = UserRole.STAFF.value
 
 
 class RefreshRequest(BaseModel):
@@ -79,7 +78,7 @@ async def register(request: RegisterRequest, db=Depends(get_db)):
             "options": {
                 "data": {
                     "full_name": request.full_name,
-                    "role": request.role,
+                    "role": UserRole.STAFF.value,
                 }
             }
         })

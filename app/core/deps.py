@@ -142,20 +142,11 @@ async def get_current_user(
             detail=f"Error interno del servidor al obtener el perfil del usuario: {str(e)}",
         )
 
-    # Fallback if profile not found or other issues
-    logger.warning("User profile not found in Supabase or profile is inactive, returning default CurrentUser", sub=payload.sub, email=payload.email)
-    return CurrentUser(
-        id=payload.sub,
-        email=payload.email,
-        role="admin",
-        permissions=[],
+    logger.warning("User profile not found in Supabase", sub=payload.sub, email=payload.email)
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Perfil de usuario no encontrado. Contacte al administrador.",
     )
-
-
-async def get_current_active_user(
-    current_user: CurrentUser = Depends(get_current_user),
-) -> CurrentUser:
-    return current_user
 
 
 def require_role(*roles: str):

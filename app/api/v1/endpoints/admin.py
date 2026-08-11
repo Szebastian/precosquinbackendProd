@@ -1,3 +1,5 @@
+import os
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
@@ -59,21 +61,42 @@ async def invite_user(
 
     temp_password = generate_temp_password()
 
+    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
     try:
-        auth_result = db.auth.admin.create_user({
-            "email": user.email,
-            "password": temp_password,
-            "email_confirm": True,
-            "user_metadata": {
-                "full_name": user.full_name,
-                "role": user.role,
-            }
-        })
+        async with httpx.AsyncClient(timeout=15) as client:
+            auth_resp = await client.post(
+                f"{supabase_url}/auth/v1/admin/users",
+                headers={
+                    "Authorization": f"Bearer {supabase_key}",
+                    "apikey": supabase_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "email": user.email,
+                    "password": temp_password,
+                    "email_confirm": True,
+                    "user_metadata": {
+                        "full_name": user.full_name,
+                        "role": user.role,
+                    },
+                },
+            )
 
-        if not auth_result.user:
-            raise HTTPException(status_code=400, detail="Error al crear usuario en auth")
+        if auth_resp.status_code not in (200, 201):
+            error_detail = auth_resp.json() if auth_resp.headers.get("content-type", "").startswith("application/json") else {"message": auth_resp.text}
+            error_msg = str(error_detail).lower()
+            if "already" in error_msg or "already exists" in error_msg or auth_resp.status_code == 409:
+                raise HTTPException(status_code=409, detail="Ya existe un usuario con ese email")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al crear usuario en auth: {error_detail}",
+            )
 
-        user_id = auth_result.user.id
+        user_id = auth_resp.json().get("id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Error al crear usuario en auth: sin ID")
 
         db.table("profiles").insert({
             "id": user_id,
@@ -101,9 +124,6 @@ async def invite_user(
     except HTTPException:
         raise
     except Exception as e:
-        error_msg = str(e).lower()
-        if "already" in error_msg or "already exists" in error_msg:
-            raise HTTPException(status_code=409, detail="Ya existe un usuario con ese email")
         raise HTTPException(status_code=500, detail=f"Error al crear usuario: {str(e)}")
 
 

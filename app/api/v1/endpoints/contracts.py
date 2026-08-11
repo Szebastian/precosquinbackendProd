@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional, List
 from pydantic import BaseModel
 
-from app.core.deps import get_current_user, require_role, CurrentUser
+from app.core.deps import require_role, CurrentUser
 from app.db.session import get_supabase
 
 router = APIRouter()
@@ -101,17 +101,23 @@ async def verify_contract_token(token: str):
 async def sign_contract(
     contract_id: str,
     signature_data: dict,
+    current_user: CurrentUser = Depends(require_role("organizador", "admin")),
 ):
     db = get_supabase()
-    import hashlib
 
-    result = db.table("artist_contracts").update({
+    result = db.table("artist_contracts").select("*").eq("id", contract_id).single().execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Contrato no encontrado")
+
+    contract = result.data
+    if contract["status"] != "sent":
+        raise HTTPException(status_code=400, detail="El contrato no está en estado 'enviado'")
+
+    db.table("artist_contracts").update({
         "status": "signed",
         "signed_at": "now()",
         "signed_by_ip": signature_data.get("ip"),
     }).eq("id", contract_id).execute()
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Contrato no encontrado")
 
     return {"message": "Contrato firmado correctamente"}

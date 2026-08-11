@@ -281,7 +281,7 @@ async def send_otp(req: OtpSendRequest, db=Depends(get_db)):
     except Exception as e:
         logger.error("Failed to send OTP", error=str(e), email=req.email)
 
-    return {"message": "Código enviado", "dev_code": code}
+    return {"message": "Código enviado"}
 
 
 @router.post("/verify-otp")
@@ -1081,6 +1081,7 @@ async def upload_inscription_file(
     file_type: str = Query(..., description="dni_front, dni_back, promo_photo, lyrics, score"),
     file: UploadFile = File(...),
     db=Depends(get_db),
+    current_user: CurrentUser = Depends(require_role("organizador", "admin", "staff", "jurado")),
 ):
     try:
         existing = db.table("inscriptions").select("id").eq("id", inscription_id).single().execute()

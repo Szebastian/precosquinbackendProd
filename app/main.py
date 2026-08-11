@@ -63,6 +63,27 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RateLimitMiddleware)
 
+    # Page view tracking middleware
+    from app.core.page_view_tracker import record_view
+
+    @app.middleware("http")
+    async def track_page_views(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if (
+            path.startswith("/v1/")
+            and not path.startswith("/v1/auth/")
+            and not path.startswith("/v1/dashboard/")
+            and not path.startswith("/v1/storage/")
+            and request.method == "GET"
+        ):
+            try:
+                visitor = request.headers.get("x-forwarded-for", "anon").split(",")[0].strip()
+                record_view(path, visitor)
+            except Exception:
+                pass
+        return response
+
     # Routes
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
@@ -70,20 +91,6 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         return {"status": "healthy", "version": settings.VERSION}
-
-    @app.get("/debug-supabase")
-    async def debug_supabase():
-        from app.db.session import _supabase_client
-        from app.core.config import settings
-        import os
-        url = os.environ.get("SUPABASE_URL", "NOT SET")
-        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "NOT SET")[:10]
-        return {
-            "client_initialized": _supabase_client is not None,
-            "url": url[:30],
-            "key_prefix": key,
-            "env_url": settings.SUPABASE_URL[:30] if settings.SUPABASE_URL else "NONE",
-        }
 
     @app.get("/")
     async def root():

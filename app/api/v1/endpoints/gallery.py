@@ -5,10 +5,12 @@ import re
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+import structlog
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from app.core.deps import require_role, CurrentUser
 from app.db.session import get_supabase
 
 router = APIRouter()
@@ -67,7 +69,6 @@ def _upload_to_storage(supabase, filename: str, data: bytes) -> str:
         ".png": "image/png",
         ".gif": "image/gif",
     }.get(ext, "application/octet-stream")
-    import structlog
     logger = structlog.get_logger()
     logger.info("gallery_upload_start", filename=filename, size=len(data), content_type=content_type)
     try:
@@ -167,8 +168,10 @@ async def get_gallery():
 
 
 @router.post("/bulk", response_model=List[GalleryItemResponse])
-async def bulk_create_gallery_items(payload: GalleryBulkCreate):
-    import structlog
+async def bulk_create_gallery_items(
+    payload: GalleryBulkCreate,
+    current_user: CurrentUser = Depends(require_role("organizador", "admin", "staff")),
+):
     logger = structlog.get_logger()
     supabase = get_supabase()
     rows = []
@@ -210,7 +213,10 @@ async def get_gallery_item(item_id: int):
 
 
 @router.post("/", response_model=GalleryItemResponse)
-async def create_gallery_item(item: GalleryItemCreate):
+async def create_gallery_item(
+    item: GalleryItemCreate,
+    current_user: CurrentUser = Depends(require_role("organizador", "admin", "staff")),
+):
     supabase = get_supabase()
     db_data = _response_to_db_row(item.model_dump())
     if _is_base64_image(db_data.get("image", "")):
@@ -225,7 +231,11 @@ async def create_gallery_item(item: GalleryItemCreate):
 
 
 @router.put("/{item_id}", response_model=GalleryItemResponse)
-async def update_gallery_item(item_id: int, item: GalleryItemUpdate):
+async def update_gallery_item(
+    item_id: int,
+    item: GalleryItemUpdate,
+    current_user: CurrentUser = Depends(require_role("organizador", "admin", "staff")),
+):
     supabase = get_supabase()
     raw = item.model_dump(exclude_unset=True)
     _FIELD_MAP = {"image": "image", "title": "title", "category": "category", "sortOrder": "sort_order", "isActive": "is_active"}
@@ -251,7 +261,10 @@ async def update_gallery_item(item_id: int, item: GalleryItemUpdate):
 
 
 @router.delete("/{item_id}")
-async def delete_gallery_item(item_id: int):
+async def delete_gallery_item(
+    item_id: int,
+    current_user: CurrentUser = Depends(require_role("organizador", "admin")),
+):
     supabase = get_supabase()
 
     result = (
