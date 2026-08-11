@@ -1081,7 +1081,6 @@ async def upload_inscription_file(
     file_type: str = Query(..., description="dni_front, dni_back, promo_photo, lyrics, score"),
     file: UploadFile = File(...),
     db=Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("organizador", "admin", "staff", "jurado")),
 ):
     try:
         existing = db.table("inscriptions").select("id").eq("id", inscription_id).single().execute()
