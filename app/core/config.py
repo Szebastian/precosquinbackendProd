@@ -30,6 +30,7 @@ class Settings(BaseSettings):
         "https://precosquin-frontend.onrender.com",
         "https://precosquin-backend.onrender.com",
     ]
+    CORS_ORIGIN_REGEX: str = r"https://.*\.netlify\.app|https://.*\.netlify\.com"
     ALLOWED_HOSTS: List[str] = ["*"]
 
     SUPABASE_URL: str = ""
