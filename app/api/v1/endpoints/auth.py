@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, status, Depends
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
+import httpx
+import os
 
 from app.core.deps import get_current_user, CurrentUser, get_db
 from app.core.constants import UserRole
@@ -155,6 +157,59 @@ async def logout(db=Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al cerrar sesión: {str(e)}",
         )
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=6)
+    new_password: str = Field(..., min_length=6)
+
+
+@router.post("/change-password")
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    if not supabase_url or not supabase_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Configuración de Supabase incompleta",
+        )
+
+    async with httpx.AsyncClient() as client:
+        verify_resp = await client.post(
+            f"{supabase_url}/auth/v1/token?grant_type=password",
+            json={"email": current_user.email, "password": request.current_password},
+            headers={"apikey": supabase_key},
+            timeout=10,
+        )
+
+        if verify_resp.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La contraseña actual es incorrecta",
+            )
+
+        update_resp = await client.put(
+            f"{supabase_url}/auth/v1/user",
+            json={"password": request.new_password},
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {verify_resp.json().get('access_token', '')}",
+            },
+            timeout=10,
+        )
+
+        if update_resp.status_code not in (200, 204):
+            detail = update_resp.json().get("msg", "Error al actualizar contraseña")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=detail,
+            )
+
+    return {"message": "Contraseña actualizada correctamente"}
 
 
 class ProfileResponse(BaseModel):
