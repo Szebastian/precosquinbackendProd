@@ -20,6 +20,7 @@ from app.api.v1.endpoints import (
     cronograma,
     acreditaciones,
     gallery,
+    stands,
 )
 
 api_router = APIRouter()
@@ -83,3 +84,6 @@ api_router.include_router(acreditaciones.router, prefix="/acreditaciones", tags=
 
 # Gallery
 api_router.include_router(gallery.router, prefix="/gallery", tags=["Gallery"])
+
+# Stands
+api_router.include_router(stands.router, prefix="/stands", tags=["Stands"])
