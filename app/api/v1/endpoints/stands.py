@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, status, Query, Depends, UploadFile
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 
-from app.core.deps import require_role, CurrentUser, get_db
+from app.core.deps import require_role, CurrentUser, get_db, get_current_user
 from app.core.constants import UserRole
 from app.core.utils import exclude_none
 from app.core.email import EmailMessage, get_email_sender
