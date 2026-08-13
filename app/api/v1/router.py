@@ -21,6 +21,7 @@ from app.api.v1.endpoints import (
     acreditaciones,
     gallery,
     stands,
+    chat,
 )
 
 api_router = APIRouter()
@@ -87,3 +88,6 @@ api_router.include_router(gallery.router, prefix="/gallery", tags=["Gallery"])
 
 # Stands
 api_router.include_router(stands.router, prefix="/stands", tags=["Stands"])
+
+# Chat (AI chatbot)
+api_router.include_router(chat.router, prefix="/chat", tags=["Chat"])

@@ -82,6 +82,13 @@ class Settings(BaseSettings):
 
     QR_ENCRYPTION_KEY: str = "PreCosquin2027!FestivalPuertoPiramides#QRSecure"
 
+    # Gemini AI (Chatbot)
+    GEMINI_API_KEY: str = ""
+
+    # Upstash Redis (Chatbot cache)
+    UPSTASH_REDIS_REST_URL: str = ""
+    UPSTASH_REDIS_REST_TOKEN: str = ""
+
     class Config:
         env_file = str(load_dotenv_path)
         case_sensitive = True
