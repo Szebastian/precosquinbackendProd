@@ -19,6 +19,69 @@ router = APIRouter()
 STANDS_BUCKET = "stands"
 
 
+def _send_creation_confirmation_email(stand_id: str, person: dict, info: dict):
+    """Send confirmation email when a stand request is created."""
+    try:
+        sender = get_email_sender()
+        email = person.get("email")
+        if not email:
+            return
+
+        stand_name = info.get("stand_name", "tu stand")
+        full_name = person.get("full_name", "")
+        
+        html = f"""
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px;background:#f8fafc;border-radius:12px;">
+          <div style="text-align:center;margin-bottom:24px;">
+            <h1 style="color:#1e3a8a;font-size:24px;margin:0;">Pre-Cosquín Puerto Pirámides</h1>
+            <p style="color:#64748b;font-size:14px;margin:8px 0 0;">Solicitud de Stand</p>
+          </div>
+          
+          <div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e2e8f0;">
+            <h2 style="color:#16a34a;font-size:20px;margin:0 0 16px;text-align:center;">¡Solicitud Recibida!</h2>
+            
+            <p style="color:#334155;font-size:15px;line-height:1.6;">
+              Hola <strong>{full_name}</strong>,
+            </p>
+            
+            <p style="color:#334155;font-size:15px;line-height:1.6;">
+              Tu solicitud de stand <strong>"{stand_name}"</strong> fue registrada correctamente.
+            </p>
+            
+            <div style="background:#f1f5f9;border-radius:8px;padding:16px;margin:20px 0;">
+              <p style="margin:0 0 8px;color:#64748b;font-size:13px;">N° de Solicitud</p>
+              <p style="margin:0;color:#1e3a8a;font-size:18px;font-weight:bold;">{stand_id[:8].upper()}</p>
+            </div>
+            
+            <p style="color:#334155;font-size:15px;line-height:1.6;">
+              Nuestro equipo revisará tu solicitud y te contactaremos a la brevedad.
+            </p>
+            
+            <p style="color:#64748b;font-size:13px;margin-top:24px;">
+              Podés consultar el estado de tu solicitud en nuestro 
+              <a href="https://precosquinpuertopiramides.com.ar" style="color:#2563eb;">sitio web</a>.
+            </p>
+          </div>
+          
+          <div style="text-align:center;margin-top:24px;">
+            <p style="color:#94a3b8;font-size:12px;">
+              Este es un mensaje automático, por favor no respondas directamente.
+            </p>
+          </div>
+        </div>
+        """
+        
+        email_msg = EmailMessage(
+            to=email,
+            subject=f"Pre-Cosquín — Solicitud de stand recibida: {stand_name}",
+            html=html,
+        )
+        sender.send(email_msg)
+        logger.info("stand_creation_email_sent", stand_id=stand_id, email=email)
+    except Exception as e:
+        logger.warning("stand_creation_email_failed", error=str(e), stand_id=stand_id)
+
+
 class StandStatus(str):
     PENDING = "PENDIENTE"
     IN_REVIEW = "EN_REVISION"
@@ -38,43 +101,35 @@ class StandPerson(BaseModel):
     email: EmailStr
     locality: str
     province: str
-    represents_company: str = "No"
 
 
 class StandInfo(BaseModel):
     stand_type: str
     stand_name: str
     description: Optional[str] = None
-    main_products: str
     instagram: Optional[str] = None
-    website: Optional[str] = None
 
 
 class StandDates(BaseModel):
     days: List[str]
-    start_time: str
-    end_time: str
 
 
 class StandEquipment(BaseModel):
-    space_size: str
     brings_structure: str
-    elements: List[str]
     table_count: Optional[int] = None
     chair_count: Optional[int] = None
 
 
 class StandElectricity(BaseModel):
     needs_electricity: str
-    equipment: Optional[List[str]] = None
-    power_watts: Optional[int] = None
 
 
 class StandGastronomy(BaseModel):
     prepares_food: str
     food_types: Optional[List[str]] = None
     uses_gas: Optional[str] = None
-    gas_details: Optional[dict] = None
+    gas_type: Optional[str] = None
+    gas_amount: Optional[int] = None
     has_certification: Optional[str] = None
     certification_doc_url: Optional[str] = None
 
@@ -120,7 +175,7 @@ class StandCreate(BaseModel):
     personnel: Optional[StandPersonnel] = None
     logistics: Optional[StandLogistics] = None
     docs: Optional[StandDocs] = None
-    observations: Optional[StandObservation] = None
+    observations: Optional[str] = None
 
 
 class StandResponse(BaseModel):
@@ -306,7 +361,7 @@ async def create_stand(stand: StandCreate, db=Depends(get_db)):
         if stand.docs:
             item_data["docs"] = json.dumps(stand.docs.model_dump())
         if stand.observations:
-            item_data["observations"] = stand.observations.observations
+            item_data["observations"] = stand.observations
 
         result = db.table("stands").insert(item_data).execute()
         if not result.data:
@@ -314,7 +369,16 @@ async def create_stand(stand: StandCreate, db=Depends(get_db)):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error al crear la solicitud de stand",
             )
-        return {"id": result.data[0]["id"], "message": "Solicitud recibida"}
+        
+        # Send confirmation email
+        stand_id = result.data[0]["id"]
+        _send_creation_confirmation_email(
+            stand_id=stand_id,
+            person=stand.person.model_dump(),
+            info=stand.info.model_dump(),
+        )
+        
+        return {"id": stand_id, "message": "Solicitud recibida"}
     except HTTPException:
         raise
     except Exception as e:
