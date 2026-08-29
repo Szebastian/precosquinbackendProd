@@ -7,6 +7,7 @@ class UserRole(str, Enum):
     STAFF = "staff"
     JURADO = "jurado"
     GESTOR_STANDS = "gestor_stands"
+    SEDE = "sede"
 
 
 class InscriptionStatus(str, Enum):

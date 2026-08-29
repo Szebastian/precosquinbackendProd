@@ -22,6 +22,7 @@ from app.api.v1.endpoints import (
     gallery,
     stands,
     chat,
+    pena_acreditaciones,
 )
 
 api_router = APIRouter()
@@ -91,3 +92,6 @@ api_router.include_router(stands.router, prefix="/stands", tags=["Stands"])
 
 # Chat (AI chatbot)
 api_router.include_router(chat.router, prefix="/chat", tags=["Chat"])
+
+# Peña Acreditaciones (público + admin)
+api_router.include_router(pena_acreditaciones.router, prefix="/pena-acreditaciones", tags=["Peña Acreditaciones"])

@@ -98,7 +98,17 @@ def decode_token(token: str) -> TokenPayload:
                 options={"verify_aud": False},
             )
 
-        return TokenPayload(**payload)
+        metadata = payload.get("user_metadata", {}) or {}
+        role = metadata.get("role") or (payload.get("role") if payload.get("role") not in ("authenticated",) else None) or "staff"
+        org_id = metadata.get("organization_id") or payload.get("org_id")
+
+        return TokenPayload(
+            sub=payload.get("sub", ""),
+            email=payload.get("email", ""),
+            role=role,
+            org_id=org_id,
+            exp=payload.get("exp", 0),
+        )
     except HTTPException:
         raise
     except JWTError as e:
@@ -136,16 +146,22 @@ async def get_current_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error fetching user profile from Supabase", exc_info=e, sub=payload.sub)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error interno del servidor al obtener el perfil del usuario: {str(e)}",
+        logger.warning("Profile lookup failed, falling back to JWT", error=str(e), sub=payload.sub, email=payload.email, jwt_role=payload.role)
+        return CurrentUser(
+            id=payload.sub,
+            email=payload.email or "",
+            role=payload.role or "staff",
+            org_id=payload.org_id,
+            permissions=[],
         )
 
     logger.warning("User profile not found in Supabase", sub=payload.sub, email=payload.email)
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Perfil de usuario no encontrado. Contacte al administrador.",
+    return CurrentUser(
+        id=payload.sub,
+        email=payload.email or "",
+        role=payload.role or "staff",
+        org_id=payload.org_id,
+        permissions=[],
     )
 
 

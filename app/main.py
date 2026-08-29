@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
     )
 
     from fastapi.exceptions import RequestValidationError
+    from starlette.middleware.base import BaseHTTPMiddleware
     import structlog
     logger = structlog.get_logger(__name__)
 
@@ -44,6 +45,29 @@ def create_app() -> FastAPI:
             status_code=422,
             content={"detail": exc.errors()},
         )
+
+    @app.exception_handler(Exception)
+    async def general_exception_handler(request: Request, exc: Exception):
+        logger.error("Unhandled exception", exc_info=exc, url=str(request.url))
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Error interno del servidor"},
+        )
+
+    # Safety net: catch any unhandled exception and return JSON
+    # This MUST be OUTSIDE CORSMiddleware so its responses get CORS headers
+    class CatchAllMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            try:
+                return await call_next(request)
+            except Exception as e:
+                logger.error("Unhandled middleware exception", exc_info=e, path=request.url.path)
+                return JSONResponse(
+                    status_code=500,
+                    content={"detail": "Error interno del servidor"},
+                )
+
+    app.add_middleware(CatchAllMiddleware)
 
     # Compression (must be first to compress all responses)
     app.add_middleware(GZipMiddleware, minimum_size=500)

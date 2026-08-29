@@ -467,10 +467,91 @@ async def assign_stand_location(
     return {"message": "Ubicación asignada"}
 
 
+class StandUpdatePartial(BaseModel):
+    """Partial update for stands - all fields optional."""
+    full_name: Optional[str] = None
+    dni: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    locality: Optional[str] = None
+    province: Optional[str] = None
+    stand_type: Optional[str] = None
+    stand_name: Optional[str] = None
+    description: Optional[str] = None
+    instagram: Optional[str] = None
+    days: Optional[List[str]] = None
+    observations: Optional[str] = None
+
+
+@router.put("/{stand_id}", response_model=StandResponse)
+async def update_stand(
+    stand_id: str,
+    payload: StandUpdatePartial,
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    existing = db.table("stands").select("*").eq("id", stand_id).single().execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Stand no encontrado")
+
+    def safe_parse(val):
+        if val is None:
+            return {}
+        if isinstance(val, str):
+            try:
+                return json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return val if isinstance(val, dict) else {}
+
+    current_person = safe_parse(existing.data.get("person"))
+    current_info = safe_parse(existing.data.get("info"))
+    current_dates = safe_parse(existing.data.get("dates"))
+
+    if payload.full_name is not None:
+        current_person["full_name"] = payload.full_name
+    if payload.dni is not None:
+        current_person["dni"] = payload.dni
+    if payload.phone is not None:
+        current_person["phone"] = payload.phone
+    if payload.email is not None:
+        current_person["email"] = payload.email
+    if payload.locality is not None:
+        current_person["locality"] = payload.locality
+    if payload.province is not None:
+        current_person["province"] = payload.province
+
+    if payload.stand_type is not None:
+        current_info["stand_type"] = payload.stand_type
+    if payload.stand_name is not None:
+        current_info["stand_name"] = payload.stand_name
+    if payload.description is not None:
+        current_info["description"] = payload.description
+    if payload.instagram is not None:
+        current_info["instagram"] = payload.instagram
+
+    if payload.days is not None:
+        current_dates["days"] = payload.days
+
+    update_data = {
+        "person": current_person,
+        "info": current_info,
+        "dates": current_dates,
+    }
+    if payload.observations is not None:
+        update_data["observations"] = payload.observations
+
+    res = db.table("stands").update(update_data).eq("id", stand_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=500, detail="Error al actualizar stand")
+
+    return _db_row_to_response(res.data[0])
+
+
 @router.delete("/{stand_id}")
 async def delete_stand(
     stand_id: str,
-    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN)),
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
     db=Depends(get_db),
 ):
     result = db.table("stands").select("id").eq("id", stand_id).execute()

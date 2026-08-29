@@ -144,7 +144,7 @@ async def list_inscriptions(
     category: Optional[str] = None,
     subcategory: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
-    current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN, UserRole.STAFF, UserRole.JURADO)),
+    current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN, UserRole.STAFF, UserRole.JURADO, UserRole.SEDE)),
     db=Depends(get_db),
 ):
     query = db.table("inscriptions").select("*", count="exact")
@@ -159,8 +159,13 @@ async def list_inscriptions(
     offset = (page - 1) * page_size
     result = query.order("created_at", desc=True).range(offset, offset + page_size - 1).execute()
 
+    items = [InscriptionResponse(**item) for item in result.data]
+    if current_user.role == UserRole.SEDE:
+        for item in items:
+            item.rider_tecnico = None
+
     return InscriptionListResponse(
-        data=[InscriptionResponse(**item) for item in result.data],
+        data=items,
         total=result.count or 0,
         page=page,
         page_size=page_size,
@@ -369,7 +374,72 @@ async def get_inscription(
             detail="Inscripción no encontrada",
         )
 
-    return InscriptionResponse(**result.data)
+    data = InscriptionResponse(**result.data)
+    if current_user.role == UserRole.SEDE:
+        data.rider_tecnico = None
+
+    return data
+
+
+class InscriptionUpdatePartial(BaseModel):
+    """Partial update for inscriptions - all fields optional."""
+    full_name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    stage_name: Optional[str] = None
+    dni: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+    birth_date: Optional[str] = None
+    age: Optional[int] = None
+    address: Optional[str] = None
+    locality: Optional[str] = None
+    province: Optional[str] = None
+    city: Optional[str] = None
+    bio: Optional[str] = None
+    technical_needs: Optional[str] = None
+    proposal_name: Optional[str] = None
+    choreographer_name: Optional[str] = None
+    style: Optional[str] = None
+    dance_list: Optional[str] = None
+    themes: Optional[list] = None
+    members: Optional[list] = None
+    accompanying_persons: Optional[list] = None
+    rider_tecnico: Optional[dict] = None
+    website: Optional[str] = None
+    instagram: Optional[str] = None
+    youtube: Optional[str] = None
+    spotify: Optional[str] = None
+
+
+@router.put("/{inscription_id}", response_model=InscriptionResponse)
+async def update_inscription(
+    inscription_id: str,
+    payload: InscriptionUpdatePartial,
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    existing = db.table("inscriptions").select("id").eq("id", inscription_id).single().execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Inscripción no encontrada")
+
+    if not payload.full_name and payload.first_name and payload.last_name:
+        payload.full_name = f"{payload.first_name} {payload.last_name}"
+
+    update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
+
+    try:
+        res = db.table("inscriptions").update(update_data).eq("id", inscription_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=500, detail="Error al actualizar inscripción")
+        return InscriptionResponse(**res.data[0])
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("inscription_update_failed", error=str(e), inscription_id=inscription_id)
+        raise HTTPException(status_code=500, detail=f"Error al actualizar inscripción: {str(e)}")
 
 
 @router.delete("/{inscription_id}", status_code=status.HTTP_200_OK)

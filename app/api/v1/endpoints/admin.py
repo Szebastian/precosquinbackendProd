@@ -41,48 +41,61 @@ async def _rest_select(supabase_url, supabase_key, table, filters=None, single=F
         url += f"&{query}"
     if single:
         url += "&limit=1"
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(url, headers=_auth_headers(supabase_key))
-    if resp.status_code == 200:
-        data = resp.json()
-        return data[0] if single and data else data
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url, headers=_auth_headers(supabase_key))
+        if resp.status_code == 200:
+            data = resp.json()
+            return data[0] if single and data else data
+    except Exception as e:
+        logger.warning("REST select failed", table=table, error=str(e))
     return None if single else []
 
 
 async def _rest_insert(supabase_url, supabase_key, table, data):
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            f"{supabase_url}/rest/v1/{table}",
-            headers={**_auth_headers(supabase_key), "Prefer": "return=representation"},
-            json=data,
-        )
-    if resp.status_code in (200, 201, 204):
-        data_out = resp.json()
-        return data_out[0] if isinstance(data_out, list) and data_out else data_out
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{supabase_url}/rest/v1/{table}",
+                headers={**_auth_headers(supabase_key), "Prefer": "return=representation"},
+                json=data,
+            )
+        if resp.status_code in (200, 201, 204):
+            data_out = resp.json()
+            return data_out[0] if isinstance(data_out, list) and data_out else data_out
+    except Exception as e:
+        logger.warning("REST insert failed", table=table, error=str(e))
     return None
 
 
 async def _rest_update(supabase_url, supabase_key, table, data, filters):
     query = "&".join(f"{k}=eq.{v}" for k, v in filters.items())
     url = f"{supabase_url}/rest/v1/{table}?{query}"
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.patch(
-            url,
-            headers={**_auth_headers(supabase_key), "Prefer": "return=representation"},
-            json=data,
-        )
-    if resp.status_code in (200, 204):
-        data_out = resp.json()
-        return data_out[0] if isinstance(data_out, list) and data_out else data_out
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.patch(
+                url,
+                headers={**_auth_headers(supabase_key), "Prefer": "return=representation"},
+                json=data,
+            )
+        if resp.status_code in (200, 204):
+            data_out = resp.json()
+            return data_out[0] if isinstance(data_out, list) and data_out else data_out
+    except Exception as e:
+        logger.warning("REST update failed", table=table, error=str(e))
     return None
 
 
 async def _rest_delete(supabase_url, supabase_key, table, filters):
     query = "&".join(f"{k}=eq.{v}" for k, v in filters.items())
     url = f"{supabase_url}/rest/v1/{table}?{query}"
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.delete(url, headers=_auth_headers(supabase_key))
-    return resp.status_code in (200, 204)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.delete(url, headers=_auth_headers(supabase_key))
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.warning("REST delete failed", table=table, error=str(e))
+        return False
 
 
 async def _rest_delete_by_id(supabase_url, supabase_key, table, row_id):
@@ -94,13 +107,16 @@ async def _rest_update_by_id(supabase_url, supabase_key, table, row_id, data):
 
 
 async def _get_auth_users(supabase_url, supabase_key):
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(
-            f"{supabase_url}/auth/v1/admin/users",
-            headers=_auth_headers(supabase_key),
-        )
-    if resp.status_code == 200:
-        return resp.json().get("users", [])
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{supabase_url}/auth/v1/admin/users",
+                headers=_auth_headers(supabase_key),
+            )
+        if resp.status_code == 200:
+            return resp.json().get("users", [])
+    except Exception as e:
+        logger.warning("Failed to fetch auth users", error=str(e))
     return []
 
 
@@ -117,6 +133,7 @@ def _send_invite_email(email: str, full_name: str, temp_password: str, role: str
         "organizador": "Organizador",
         "jurado": "Jurado",
         "staff": "Staff",
+        "sede": "Sede Cosquín",
     }
     role_label = role_labels.get(role, role)
     login_url = "https://precosquinpiramides.com/login"

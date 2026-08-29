@@ -16,7 +16,7 @@ async def get_inscriptions_report(
     subcategory: Optional[str] = None,
     province: Optional[str] = None,
     experience: Optional[str] = None,
-    current_user: CurrentUser = Depends(require_role("organizador", "admin")),
+    current_user: CurrentUser = Depends(require_role("organizador", "admin", "sede")),
 ):
     db = get_supabase()
     query = db.table("inscriptions").select("*")
@@ -56,7 +56,7 @@ async def get_inscriptions_report(
 @router.get("/inscriptions/export")
 async def export_inscriptions_csv(
     category: Optional[str] = None,
-    current_user: CurrentUser = Depends(require_role("organizador", "admin")),
+    current_user: CurrentUser = Depends(require_role("organizador", "admin", "sede")),
 ):
     db = get_supabase()
     query = db.table("inscriptions").select("*")
@@ -93,7 +93,7 @@ async def export_inscriptions_csv(
 @router.get("/engagement")
 async def get_engagement_report(
     category: Optional[str] = None,
-    current_user: CurrentUser = Depends(require_role("organizador", "admin")),
+    current_user: CurrentUser = Depends(require_role("organizador", "admin", "sede")),
 ):
     db = get_supabase()
 
