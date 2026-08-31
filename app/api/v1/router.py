@@ -23,6 +23,7 @@ from app.api.v1.endpoints import (
     stands,
     chat,
     pena_acreditaciones,
+    sorteo_avistaje,
 )
 
 api_router = APIRouter()
@@ -95,3 +96,6 @@ api_router.include_router(chat.router, prefix="/chat", tags=["Chat"])
 
 # Peña Acreditaciones (público + admin)
 api_router.include_router(pena_acreditaciones.router, prefix="/pena-acreditaciones", tags=["Peña Acreditaciones"])
+
+# Sorteo Avistaje de Ballenas (público + admin)
+api_router.include_router(sorteo_avistaje.router, prefix="/sorteo-avistaje", tags=["Sorteo Avistaje"])

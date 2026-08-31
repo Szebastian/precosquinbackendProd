@@ -34,12 +34,14 @@ class PenaAcreditacionResponse(BaseModel):
     dia_presentacion: str
     acompaniantes: List[dict]
     status: str
+    is_read: bool = False
     created_at: str
     updated_at: str
 
 class PenaListResponse(BaseModel):
     data: List[PenaAcreditacionResponse]
     total: int
+    unread: int
     page: int
     page_size: int
 
@@ -54,6 +56,7 @@ async def create_pena_acreditacion(payload: PenaAcreditacionCreate, db=Depends(g
             "dia_presentacion": payload.diaPresentacion,
             "acompaniantes": [a.model_dump() for a in payload.acompaniantes],
             "status": "PENDIENTE",
+            "is_read": False,
         }
         res = db.table("pena_acreditaciones").insert(row).execute()
         if not res.data:
@@ -71,6 +74,8 @@ async def list_pena_acreditaciones(
     page_size: int = Query(20, ge=1, le=100),
     dia: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    is_read: Optional[bool] = Query(None),
     current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
     db=Depends(get_db),
 ):
@@ -78,10 +83,17 @@ async def list_pena_acreditaciones(
         q = db.table("pena_acreditaciones").select("*", count="exact")
         if dia:
             q = q.eq("dia_presentacion", dia)
+        if status:
+            q = q.eq("status", status)
+        if is_read is not None:
+            q = q.eq("is_read", is_read)
         if search:
             q = q.or_(f"nombre_grupo.ilike.*{search}*,nombre_responsable.ilike.*{search}*,dni_responsable.ilike.*{search}*")
         offset = (page - 1) * page_size
         res = q.order("created_at", desc=True).range(offset, offset + page_size - 1).execute()
+
+        unread_res = db.table("pena_acreditaciones").select("id", count="exact").eq("is_read", False).execute()
+
         data = []
         for r in (res.data or []):
             data.append(PenaAcreditacionResponse(
@@ -93,17 +105,39 @@ async def list_pena_acreditaciones(
                 dia_presentacion=r["dia_presentacion"],
                 acompaniantes=r.get("acompaniantes") or [],
                 status=r.get("status", "PENDIENTE"),
+                is_read=r.get("is_read", False),
                 created_at=str(r.get("created_at") or ""),
                 updated_at=str(r.get("updated_at") or ""),
             ))
-        return PenaListResponse(data=data, total=res.count or 0, page=page, page_size=page_size)
+        return PenaListResponse(
+            data=data,
+            total=res.count or 0,
+            unread=unread_res.count or 0,
+            page=page,
+            page_size=page_size,
+        )
     except Exception as e:
         msg = str(e).lower()
-        if "does not exist" in msg or "relation" in msg or "pena_acreditaciones" in msg:
+        if "does not exist" in msg or "relation" in msg or "pena_acreditaciones" in msg or "column" in msg:
             logger.warning("pena_table_not_exists", error=str(e))
-            return PenaListResponse(data=[], total=0, page=page, page_size=page_size)
+            return PenaListResponse(data=[], total=0, unread=0, page=page, page_size=page_size)
         logger.error("pena_list_failed", error=str(e))
         raise HTTPException(status_code=500, detail="Error al listar acreditaciones")
+
+@router.get("/unread-count")
+async def get_unread_count(
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    try:
+        res = db.table("pena_acreditaciones").select("id", count="exact").eq("is_read", False).execute()
+        return {"unread": res.count or 0}
+    except Exception as e:
+        msg = str(e).lower()
+        if "does not exist" in msg or "relation" in msg or "column" in msg:
+            return {"unread": 0}
+        logger.error("pena_unread_count_failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Error al contar no leídas")
 
 @router.get("/{id}", response_model=PenaAcreditacionResponse)
 async def get_pena_acreditacion(
@@ -124,6 +158,7 @@ async def get_pena_acreditacion(
         dia_presentacion=r["dia_presentacion"],
         acompaniantes=r.get("acompaniantes") or [],
         status=r.get("status", "PENDIENTE"),
+        is_read=r.get("is_read", False),
         created_at=str(r.get("created_at") or ""),
         updated_at=str(r.get("updated_at") or ""),
     )
@@ -162,9 +197,37 @@ async def update_pena_acreditacion(
         dia_presentacion=r["dia_presentacion"],
         acompaniantes=r.get("acompaniantes") or [],
         status=r.get("status", "PENDIENTE"),
+        is_read=r.get("is_read", False),
         created_at=str(r.get("created_at") or ""),
         updated_at=str(r.get("updated_at") or ""),
     )
+
+
+@router.patch("/{id}/read")
+async def mark_as_read(
+    id: str,
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    existing = db.table("pena_acreditaciones").select("id").eq("id", id).single().execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Acreditación no encontrada")
+
+    db.table("pena_acreditaciones").update({"is_read": True}).eq("id", id).execute()
+    return {"message": "Marcada como leída"}
+
+
+@router.patch("/read-all")
+async def mark_all_as_read(
+    current_user: CurrentUser = Depends(require_role(UserRole.ADMIN, UserRole.ORGANIZADOR)),
+    db=Depends(get_db),
+):
+    try:
+        db.table("pena_acreditaciones").update({"is_read": True}).eq("is_read", False).execute()
+        return {"message": "Todas marcadas como leídas"}
+    except Exception as e:
+        logger.error("pena_read_all_failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Error al marcar como leídas")
 
 
 @router.delete("/{id}")

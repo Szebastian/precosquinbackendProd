@@ -9,7 +9,7 @@ from app.db.session import get_supabase
 logger = structlog.get_logger()
 router = APIRouter()
 
-PUBLIC_BUCKETS = {"logos", "inscriptions"}
+PUBLIC_BUCKETS = {"logos", "inscriptions", "sorteo_avistaje"}
 
 
 def _ensure_bucket(db, bucket: str):
