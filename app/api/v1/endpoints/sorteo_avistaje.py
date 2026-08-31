@@ -18,6 +18,7 @@ class SorteoCreate(BaseModel):
     full_name: str = Field(..., min_length=1)
     whatsapp: str = Field(..., min_length=1)
     email: str = Field(..., min_length=1)
+    province: Optional[str] = None
     city: str = Field(..., min_length=1)
     comprobante_numero: Optional[str] = None
 
@@ -27,6 +28,7 @@ class SorteoResponse(BaseModel):
     full_name: str
     whatsapp: str
     email: str
+    province: Optional[str] = None
     city: str
     comprobante_url: Optional[str] = None
     comprobante_numero: Optional[str] = None
@@ -48,6 +50,7 @@ async def create_sorteo(payload: SorteoCreate, db=Depends(get_db)):
             "full_name": payload.full_name,
             "whatsapp": payload.whatsapp,
             "email": payload.email,
+            "province": payload.province,
             "city": payload.city,
             "comprobante_numero": payload.comprobante_numero,
             "status": "pendiente_validacion",
