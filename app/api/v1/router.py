@@ -24,6 +24,7 @@ from app.api.v1.endpoints import (
     chat,
     pena_acreditaciones,
     sorteo_avistaje,
+    partners,
 )
 
 api_router = APIRouter()
@@ -99,3 +100,6 @@ api_router.include_router(pena_acreditaciones.router, prefix="/pena-acreditacion
 
 # Sorteo Avistaje de Ballenas (público + admin)
 api_router.include_router(sorteo_avistaje.router, prefix="/sorteo-avistaje", tags=["Sorteo Avistaje"])
+
+# Partners (sponsors & collaborators)
+api_router.include_router(partners.router, prefix="/partners", tags=["Partners"])
