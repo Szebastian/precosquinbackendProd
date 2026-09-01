@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     SENDGRID_FROM_EMAIL: str = "info@precosquinpiramides.com"
     SENDGRID_FROM_NAME: str = "Pre-Cosquín Puerto Pirámides"
 
+    LOGO_URL: str = ""
+
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "noreply@contacto.precosquinpiramides.com"
     RESEND_FROM_NAME: str = "Pre-Cosquín Puerto Pirámides"

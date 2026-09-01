@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from typing import Optional
 import structlog
@@ -13,19 +14,54 @@ PUBLIC_BUCKETS = {"logos", "inscriptions", "sorteo_avistaje"}
 
 
 def _ensure_bucket(db, bucket: str):
-    """Create or update bucket to be public."""
+    """Create or update bucket to be public using httpx REST API."""
     if bucket not in PUBLIC_BUCKETS:
         return
+
+    import httpx
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supabase_url or not service_key:
+        logger.warning("bucket_ensure_skip_no_config", bucket=bucket)
+        return
+
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+        "Content-Type": "application/json",
+    }
+    base = f"{supabase_url}/storage/v1"
+
+    # Check if bucket exists
     try:
-        db.storage.create_bucket(bucket, {"public": True})
-        logger.info("bucket_created", bucket=bucket)
-    except Exception:
-        # Bucket exists, try to update it to public
-        try:
-            db.storage.update_bucket(bucket, {"public": True})
-            logger.info("bucket_updated_to_public", bucket=bucket)
-        except Exception:
-            pass
+        resp = httpx.get(f"{base}/bucket", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            buckets = resp.json()
+            names = [b.get("name", "") for b in buckets] if isinstance(buckets, list) else []
+            if bucket in names:
+                logger.info("bucket_already_exists", bucket=bucket)
+                # Make sure it's public
+                httpx.post(f"{base}/bucket/{bucket}", headers=headers, json={"public": True}, timeout=10)
+                return
+    except Exception as e:
+        logger.warning("bucket_list_failed", error=str(e))
+
+    # Create bucket
+    try:
+        resp = httpx.post(
+            f"{base}/bucket",
+            headers=headers,
+            json={"id": bucket, "name": bucket, "public": True, "file_size_limit": 10485760},
+            timeout=10,
+        )
+        if resp.status_code in (200, 201, 409):
+            logger.info("bucket_created", bucket=bucket, status=resp.status_code)
+            if resp.status_code == 409:
+                httpx.post(f"{base}/bucket/{bucket}", headers=headers, json={"public": True}, timeout=10)
+        else:
+            logger.warning("bucket_create_failed", bucket=bucket, status=resp.status_code, body=resp.text[:200])
+    except Exception as e:
+        logger.warning("bucket_create_error", bucket=bucket, error=str(e))
 
 
 @router.post("/upload/{bucket}/{path:path}")
