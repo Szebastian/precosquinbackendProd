@@ -259,6 +259,174 @@ async def get_temporal_with_hourly(
     return get_daily_views_with_hours(days)
 
 
+# --- Recent Activity (multi-source feed) ---
+
+class ActivityItem(BaseModel):
+    id: str
+    type: str  # submitted | approved | rejected | pending | signed | sorteado | acreditado
+    description: str
+    time: str  # ISO timestamp
+    link: str
+
+
+def _relative_time(iso_str: str) -> str:
+    """Return 'hace X min', 'hace X horas', etc."""
+    try:
+        if not iso_str:
+            return ""
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        diff = now - dt
+        secs = int(diff.total_seconds())
+        if secs < 60:
+            return "hace un momento"
+        if secs < 3600:
+            mins = secs // 60
+            return f"hace {mins} min" if mins > 1 else "hace 1 min"
+        if secs < 86400:
+            hours = secs // 3600
+            return f"hace {hours} horas" if hours > 1 else "hace 1 hora"
+        days = secs // 86400
+        return f"hace {days} días" if days > 1 else "hace 1 día"
+    except Exception:
+        return iso_str[:10] if iso_str else ""
+
+
+def _status_to_type(status: str) -> str:
+    mapping = {
+        "PENDIENTE": "submitted",
+        "EN_REVISION": "pending",
+        "EN_EVALUACION": "pending",
+        "APROBADA": "approved",
+        "RECHAZADA": "rejected",
+        "ACREDITADO": "acreditado",
+    }
+    return mapping.get(status, "submitted")
+
+
+def _status_label(status: str) -> str:
+    mapping = {
+        "PENDIENTE": "envió inscripción",
+        "EN_REVISION": "en revisión",
+        "EN_EVALUACION": "en evaluación",
+        "APROBADA": "fue aprobada",
+        "RECHAZADA": "fue rechazada",
+        "ACREDITADO": "acreditado",
+    }
+    return mapping.get(status, status.lower())
+
+
+@router.get("/recent-activity", response_model=List[ActivityItem])
+async def get_recent_activity(
+    limit: int = Query(default=10, ge=1, le=30),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    db = get_supabase()
+    activities: list[dict] = []
+
+    # --- 1. Latest inscriptions (by updated_at for recency) ---
+    try:
+        ins_resp = (
+            db.table("inscriptions")
+            .select("id, full_name, stage_name, category, subcategory, status, created_at, updated_at")
+            .order("updated_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        for ins in (ins_resp.data or []):
+            full_name = ins.get("full_name", "")
+            stage_name = ins.get("stage_name")
+            cat = ins.get("category", "")
+            sub = ins.get("subcategory", "")
+            status = ins.get("status", "")
+            display_name = stage_name or full_name
+
+            parts = [cat]
+            if sub:
+                parts.append(sub)
+            loc = " > ".join(p for p in parts if p)
+
+            label = _status_label(status)
+            desc = f"{display_name} {label}"
+            if loc and status == "PENDIENTE":
+                desc = f"{display_name} envió inscripción - {loc}"
+            elif loc:
+                desc = f"{display_name} {label} - {loc}"
+
+            activities.append({
+                "id": f"ins-{ins['id']}",
+                "type": _status_to_type(status),
+                "description": desc,
+                "time": ins.get("updated_at") or ins.get("created_at", ""),
+                "link": "/panel/inscripciones",
+            })
+    except Exception:
+        pass
+
+    # --- 2. Sorteo avistaje participations ---
+    try:
+        sorteo_resp = (
+            db.table("sorteo_avistaje")
+            .select("id, full_name, status, created_at, updated_at")
+            .order("created_at", desc=True)
+            .limit(5)
+            .execute()
+        )
+        for s in (sorteo_resp.data or []):
+            status = s.get("status", "pendiente")
+            if status == "pendiente":
+                desc = f"{s.get('full_name', '')} registró participación en sorteo"
+                stype = "sorteado"
+            elif status == "validado":
+                desc = f"{s.get('full_name', '')} sorteo validado ✓"
+                stype = "approved"
+            else:
+                desc = f"{s.get('full_name', '')} sorteo: {status}"
+                stype = "pending"
+
+            activities.append({
+                "id": f"srt-{s['id']}",
+                "type": stype,
+                "description": desc,
+                "time": s.get("created_at", ""),
+                "link": "/panel/sorteo-avistaje",
+            })
+    except Exception:
+        pass
+
+    # --- 3. Peña acreditaciones ---
+    try:
+        pena_resp = (
+            db.table("pena_acreditaciones")
+            .select("id, full_name, status, created_at")
+            .order("created_at", desc=True)
+            .limit(5)
+            .execute()
+        )
+        for p in (pena_resp.data or []):
+            status = p.get("status", "PENDIENTE")
+            label = _status_label(status) if status in ("ACREDITADO",) else "solicitó acreditación"
+            activities.append({
+                "id": f"pena-{p['id']}",
+                "type": _status_to_type(status),
+                "description": f"{p.get('full_name', '')} {label}",
+                "time": p.get("created_at", ""),
+                "link": "/panel/pena-acreditaciones",
+            })
+    except Exception:
+        pass
+
+    # --- Sort by time (most recent first) and limit ---
+    activities.sort(key=lambda a: a.get("time", ""), reverse=True)
+    result = activities[:limit]
+
+    # Format time as relative
+    for item in result:
+        item["time"] = _relative_time(item["time"])
+
+    return result
+
+
 class PageViewRequest(BaseModel):
     path: str
     visitor_id: str = "anon"
