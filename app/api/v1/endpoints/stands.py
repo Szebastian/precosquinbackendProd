@@ -400,7 +400,7 @@ async def get_stand(stand_id: str, db=Depends(get_db)):
 @router.get("/", response_model=StandListResponse)
 async def list_stands(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=1000),
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN, UserRole.STAFF, UserRole.GESTOR_STANDS)),

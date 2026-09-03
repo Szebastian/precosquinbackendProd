@@ -71,7 +71,7 @@ async def create_pena_acreditacion(payload: PenaAcreditacionCreate, db=Depends(g
 @router.get("/", response_model=PenaListResponse)
 async def list_pena_acreditaciones(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=1000),
     dia: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     status: Optional[str] = Query(None),

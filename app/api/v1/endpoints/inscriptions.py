@@ -140,7 +140,7 @@ class InscriptionListResponse(BaseModel):
 @router.get("/", response_model=InscriptionListResponse)
 async def list_inscriptions(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=200),
+    page_size: int = Query(20, ge=1, le=1000),
     category: Optional[str] = None,
     subcategory: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
