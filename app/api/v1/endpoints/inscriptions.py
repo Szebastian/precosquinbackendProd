@@ -324,6 +324,39 @@ async def check_email_exists(email: str = Query(...), db=Depends(get_db)):
         return {"exists": False}
 
 
+@router.get("/check-dni")
+async def check_dni_exists(dni: str = Query(...), db=Depends(get_db)):
+    """Check if a DNI is already registered in the inscriptions table."""
+    dni_clean = dni.replace(".", "").replace("-", "").strip()
+    if not dni_clean:
+        return {"exists": False}
+    try:
+        result = (
+            db.table("inscriptions")
+            .select("id, status, full_name, email, category, subcategory, created_at")
+            .eq("dni", dni_clean)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return {"exists": False}
+        ins = result.data[0]
+        return {
+            "exists": True,
+            "inscription_id": ins.get("id"),
+            "status": ins.get("status"),
+            "full_name": ins.get("full_name"),
+            "email": ins.get("email"),
+            "category": ins.get("category"),
+            "subcategory": ins.get("subcategory"),
+            "created_at": ins.get("created_at"),
+        }
+    except Exception as e:
+        logger.error("Error checking dni", error=str(e), dni=dni_clean)
+        return {"exists": False}
+
+
 @router.get("/{inscription_id}/qr-image")
 async def get_qr_image(inscription_id: str, db=Depends(get_db)):
     """Public endpoint: serves the QR code PNG image for an inscription."""

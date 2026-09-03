@@ -38,6 +38,10 @@ qrcode[pil]>=7.4
 Pillow>=10.0.0
 pycryptodome>=3.20.0
 
+# Excel parsing
+pandas>=2.2.0
+openpyxl>=3.1.0
+
 # Utils
 python-dateutil==2.9.0
 pytz==2024.1

@@ -25,6 +25,7 @@ from app.api.v1.endpoints import (
     pena_acreditaciones,
     sorteo_avistaje,
     partners,
+    excel_import,
 )
 
 api_router = APIRouter()
@@ -103,3 +104,6 @@ api_router.include_router(sorteo_avistaje.router, prefix="/sorteo-avistaje", tag
 
 # Partners (sponsors & collaborators)
 api_router.include_router(partners.router, prefix="/partners", tags=["Partners"])
+
+# Excel import (inscription form parser)
+api_router.include_router(excel_import.router, prefix="/inscriptions", tags=["Excel Import"])
