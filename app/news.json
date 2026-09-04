@@ -3,47 +3,43 @@
     "id": 1,
     "category": "FESTIVAL 2026",
     "title": "Se abren las inscripciones para el certamen Nuevos Valores",
-    "image": "assets/home-background.jpg",
+    "description": "El Pre Cosquín Puerto Pirámides abre sus puertas a nuevos talentos del folklore argentino. El certamen Nuevos Valores está dirigido a artistas emergentes que buscan dar a conocer su arte en uno de los escenarios más importantes del folklorismo patagónico.",
+    "image": "assets/home-background.webp",
     "thumbType": "img",
-    "thumbSrc": "assets/img/cruzBaila.png",
+    "thumbSrc": "assets/img/cruzBaila.webp",
     "thumbBg": "bg-blue"
-  },
-  {
-    "id": 2,
-    "category": "JURADO",
-    "title": "Capacitación para el jurado de danza en el Hotel Rayentray",
-    "image": "assets/rayentray.png",
-    "thumbType": "img",
-    "thumbSrc": "assets/img/cruzBaila.png",
-    "thumbBg": "bg-blue"
-  },
-  {
-    "id": 3,
-    "category": "REGLAMENTO",
-    "title": "Modificación en el reglamento del rubro \"Solista Vocal\"",
-    "image": "assets/hidro.jpeg",
-    "thumbType": "icon",
-    "thumbSrc": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z\"/><path d=\"M14 2v6h6\"/></svg>",
-    "thumbBg": "bg-gold"
-  },
-  {
-    "id": 4,
-    "category": "CRONOGRAMA",
-    "title": "Cronograma oficial de la primera ronda clasificatoria",
-    "image": "assets/home-background.jpg",
-    "thumbType": "icon",
-    "thumbSrc": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"18\" rx=\"2\" ry=\"2\"/><line x1=\"16\" y1=\"2\" x2=\"16\" y2=\"6\"/><line x1=\"8\" y1=\"2\" x2=\"8\" y2=\"6\"/><line x1=\"3\" y1=\"10\" x2=\"21\" y2=\"10\"/></svg>",
-    "thumbBg": "bg-gray"
   },
   {
     "id": 5,
-    "category": "Ganadores precosquin",
-    "title": "Sede puerto piramides",
-    "description": "“Los emblemáticos referentes de nuestra cultura estarán en esta plaza para seguir marcando el rumbo trazado por las guitarras… y nueve Lunas estarán fecundadas de pañuelos buscando el arresto apasionado en cada danza… y al tranco cortito descubriremos el misterio antiguo que encierra cada garganta cuando canta.",
-    "image": "https://aquicosquin.com.ar/wp-content/uploads/2025/11/ganadores-pre-sedes-octubre-12.jpg",
-    "imagePosition": "top center",
+    "category": "NUEVO RUBRO",
+    "title": "Nuevo rubro en música: \"Expresión Oral Folklórica\"",
+    "description": "El 55° Pre Cosquín 2027 (Sede Puerto Pirámides) anuncia la incorporación de un nuevo rubro: Expresión Oral Folklórica.",
+    "image": "/v1/news/images/5bbda79830b56726d57a76dd19d3af5a.png",
+    "imagePosition": "bottom left",
     "thumbType": "img",
-    "thumbSrc": "assets/img/cruzBaila.png",
+    "thumbSrc": "assets/img/logoballena.webp",
+    "thumbBg": "bg-blue"
+  },
+  {
+    "id": 6,
+    "category": "INSTITUCIONAL",
+    "title": "¡Presentamos la identidad oficial del Pre-Cosquín 2027!",
+    "description": "¡Comienza el camino hacia la plaza Próspero Molina! Te presentamos el logo oficial de la 55.° edición del Certamen para Nuevos Valores Pre-Cosquín 2027.",
+    "image": "/v1/news/images/0f1cce32e5bc437539818ed7cfa8fcd2.jpg",
+    "imagePosition": "center center",
+    "thumbType": "img",
+    "thumbSrc": "assets/img/logoballena.webp",
+    "thumbBg": "bg-blue"
+  },
+  {
+    "id": 7,
+    "category": "PATROCINIO",
+    "title": "Conocé a los sponsors que hacen posible el Pre-Cosquín 2027",
+    "description": "Agradecemos a Hotel Rayentray, Hidroeléctrica El Chocón y Municipalidad de Puerto Pirámides por acompañarnos en esta nueva edición del certamen.",
+    "image": "assets/home-background.webp",
+    "imagePosition": "center center",
+    "thumbType": "img",
+    "thumbSrc": "assets/img/LRayentray.webp",
     "thumbBg": "bg-blue"
   }
 ]

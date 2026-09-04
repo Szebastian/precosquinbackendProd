@@ -1,14 +1,19 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 import structlog
+
+_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(_env_path, override=True)
+
 from supabase import create_client, Client
 
-logger = structlog.get_logger(__name__)
-
 _supabase_client: Client | None = None
+logger = structlog.get_logger(__name__)
 
 
 async def init_db() -> None:
     global _supabase_client
-    import os
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 

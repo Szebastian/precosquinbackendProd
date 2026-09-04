@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional, List
 from pydantic import BaseModel
-from datetime import datetime, timezone
 
 from app.core.deps import get_current_user, require_role, CurrentUser
 from app.db.session import get_supabase
@@ -36,11 +35,10 @@ async def update_checklist_task(
     current_user: CurrentUser = Depends(require_role("staff")),
 ):
     db = get_supabase()
-    now = datetime.now(timezone.utc).isoformat()
     result = db.table("artist_checklist_tasks").update({
         "status": update.status,
         "completed_by": current_user.id if update.status == "completed" else None,
-        "completed_at": now if update.status == "completed" else None,
+        "completed_at": "now()" if update.status == "completed" else None,
     }).eq("id", task_id).execute()
 
     if not result.data:
@@ -78,11 +76,10 @@ async def update_incident_status(
     current_user: CurrentUser = Depends(require_role("staff", "organizador", "admin")),
 ):
     db = get_supabase()
-    now = datetime.now(timezone.utc).isoformat()
     result = db.table("incidents").update({
         "status": status,
         "resolved_by": current_user.id if status == "resolved" else None,
-        "resolved_at": now if status == "resolved" else None,
+        "resolved_at": "now()" if status == "resolved" else None,
     }).eq("id", incident_id).execute()
 
     if not result.data:

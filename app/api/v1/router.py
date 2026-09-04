@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     jury,
     staff,
     notifications,
+    communications,
     contracts,
     reports,
     admin,
@@ -14,6 +15,17 @@ from app.api.v1.endpoints import (
     categories,
     storage,
     news,
+    messages,
+    email_webhook,
+    cronograma,
+    acreditaciones,
+    gallery,
+    stands,
+    chat,
+    pena_acreditaciones,
+    sorteo_avistaje,
+    partners,
+    excel_import,
 )
 
 api_router = APIRouter()
@@ -45,6 +57,9 @@ api_router.include_router(staff.router, prefix="/staff", tags=["Staff"])
 # Notifications
 api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 
+# Communications (email send/schedule/jobs)
+api_router.include_router(communications.router, prefix="/communications", tags=["Communications"])
+
 # Contracts
 api_router.include_router(contracts.router, prefix="/contracts", tags=["Contracts"])
 
@@ -59,3 +74,36 @@ api_router.include_router(storage.router, prefix="/storage", tags=["Storage"])
 
 # News
 api_router.include_router(news.router, prefix="/news", tags=["News"])
+
+# Messages (contact form)
+api_router.include_router(messages.router, prefix="/messages", tags=["Messages"])
+
+# Email webhook (incoming emails from ForwardEmail)
+api_router.include_router(email_webhook.router, prefix="/email", tags=["Email Webhook"])
+
+# Cronograma
+api_router.include_router(cronograma.router, prefix="/cronograma", tags=["Cronograma"])
+
+# Acreditaciones
+api_router.include_router(acreditaciones.router, prefix="/acreditaciones", tags=["Acreditaciones"])
+
+# Gallery
+api_router.include_router(gallery.router, prefix="/gallery", tags=["Gallery"])
+
+# Stands
+api_router.include_router(stands.router, prefix="/stands", tags=["Stands"])
+
+# Chat (AI chatbot)
+api_router.include_router(chat.router, prefix="/chat", tags=["Chat"])
+
+# Peña Acreditaciones (público + admin)
+api_router.include_router(pena_acreditaciones.router, prefix="/pena-acreditaciones", tags=["Peña Acreditaciones"])
+
+# Sorteo Avistaje de Ballenas (público + admin)
+api_router.include_router(sorteo_avistaje.router, prefix="/sorteo-avistaje", tags=["Sorteo Avistaje"])
+
+# Partners (sponsors & collaborators)
+api_router.include_router(partners.router, prefix="/partners", tags=["Partners"])
+
+# Excel import (inscription form parser)
+api_router.include_router(excel_import.router, prefix="/inscriptions", tags=["Excel Import"])

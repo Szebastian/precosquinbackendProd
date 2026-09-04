@@ -1,18 +1,31 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
-from typing import List, Optional
-import json
-import os
+from typing import Optional, List
+import base64
+import hashlib
+import io
+import re
 from pathlib import Path
 
-from app.core.deps import require_role, CurrentUser
+from PIL import Image as PILImage
+
+from app.core.deps import require_role, CurrentUser, get_db
+from app.core.constants import UserRole
 
 router = APIRouter()
 
-# Path to local news JSON file
-NEWS_FILE = Path(__file__).resolve().parent.parent.parent / "news.json"
+# Paths for image files (Base64 conversion)
+NEWS_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "news"
+NEWS_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-class NewsItem(BaseModel):
+# Cache headers
+CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
+
+
+# --- Pydantic schemas ---
+
+class NewsItemCreate(BaseModel):
     id: Optional[int] = None
     category: str
     title: str
@@ -22,102 +35,241 @@ class NewsItem(BaseModel):
     thumbType: str  # 'img' | 'icon'
     thumbSrc: str
     thumbBg: str
+    sortOrder: Optional[int] = 0
+    isActive: Optional[bool] = True
 
-# Default news items as fallback
-DEFAULT_NEWS = [
-    {
-        "id": 1,
-        "category": "FESTIVAL 2026",
-        "title": "Se abren las inscripciones para el certamen Nuevos Valores",
-        "description": "El Pre Cosquín Puerto Pirámides abre sus puertas a nuevos talentos del folklore argentino. El certamen Nuevos Valores está dirigido a artistas emergentes que buscan dar a conocer su arte en uno de los escenarios más importantes del folklorismo patagónico. Las inscripciones están abiertas para los rubros de Música y Danza, con categorías que incluyen solistas, dúos, conjuntos y más. No perdás la oportunidad de formar parte de esta experiencia única.",
-        "image": "assets/home-background.jpg",
-        "thumbType": "img",
-        "thumbSrc": "assets/img/cruzBaila.png",
-        "thumbBg": "bg-blue"
-    },
-    {
-        "id": 2,
-        "category": "JURADO",
-        "title": "Capacitación para el jurado de danza en el Hotel Rayentray",
-        "description": "Los integrantes del jurado de la categoría Danza se reunieron en el Hotel Rayentray de Puerto Madryn para una jornada de capacitación y puesta en común. El encuentro contó con la presencia de reconocidos bailarines y coreógrafos folclóricos que compartieron sus experiencias y criterios de evaluación. Esta preparación garantiza un análisis justo y profesional de todas las presentaciones del certamen.",
-        "image": "assets/rayentray.png",
-        "thumbType": "img",
-        "thumbSrc": "assets/img/cruzBaila.png",
-        "thumbBg": "bg-blue"
-    },
-    {
-        "id": 3,
-        "category": "REGLAMENTO",
-        "title": "Modificación en el reglamento del rubro 'Solista Vocal'",
-        "description": "Se realizó una actualización importante en el reglamento correspondiente al rubro Solista Vocal. Los cambios incluyen la posibilidad de incluir acompañamiento instrumental acústico, la ampliación del tiempo máximo de presentación a 12 minutos y la obligatoriedad de incluir al menos una obra de autor regional. Estas modificaciones buscan enriquecer la calidad artística del certamen y valorar la producción local.",
-        "image": "assets/hidro.jpeg",
-        "thumbType": "icon",
-        "thumbSrc": '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>',
-        "thumbBg": "bg-gold"
-    },
-    {
-        "id": 4,
-        "category": "CRONOGRAMA",
-        "title": "Cronograma oficial de la primera ronda clasificatoria",
-        "description": "Se dio a conocer el cronograma completo de la primera ronda clasificatoria del Pre Cosquín 2026. Las presentaciones comenzarán el sábado 5 de septiembre a las 10:00 horas en el stage principal de Puerto Pirámides. Los rubros de Música se presentarán por la mañana y los de Danza por la tarde. Se recuerda a los participantes presentarse 30 minutos antes de su horario asignado para la revisión de documentación.",
-        "image": "assets/home-background.jpg",
-        "thumbType": "icon",
-        "thumbSrc": '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
-        "thumbBg": "bg-gray"
+
+class NewsItemResponse(BaseModel):
+    id: int
+    category: str
+    title: str
+    description: Optional[str] = ""
+    image: str
+    imagePosition: Optional[str] = "center center"
+    thumbType: str
+    thumbSrc: str
+    thumbBg: str
+    sortOrder: Optional[int] = 0
+    isActive: Optional[bool] = True
+
+
+# --- Helpers ---
+
+def _is_base64_image(data: str) -> bool:
+    return data.startswith("data:image/")
+
+
+def _convert_base64_to_file(base64_data: str) -> str:
+    match = re.match(r"data:(image/\w+);base64,(.+)", base64_data)
+    if not match:
+        return base64_data
+
+    mime_type = match.group(1)
+    base64_str = match.group(2)
+
+    data_hash = hashlib.md5(base64_str.encode()).hexdigest()
+    filename = f"{data_hash}.webp"
+    filepath = NEWS_IMAGES_DIR / filename
+
+    if not filepath.exists():
+        try:
+            image_bytes = base64.b64decode(base64_str)
+            img = PILImage.open(io.BytesIO(image_bytes))
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(filepath, "WEBP", quality=80, method=6)
+        except Exception:
+            return base64_data
+
+    return f"/v1/news/images/{filename}"
+
+
+def _db_row_to_response(row: dict) -> dict:
+    """Convert DB column names to frontend camelCase format."""
+    return {
+        "id": row["id"],
+        "category": row["category"],
+        "title": row["title"],
+        "description": row.get("description", ""),
+        "image": row.get("image", ""),
+        "imagePosition": row.get("image_position", "center center"),
+        "thumbType": row.get("thumb_type", "img"),
+        "thumbSrc": row.get("thumb_src", ""),
+        "thumbBg": row.get("thumb_bg", "bg-blue"),
+        "sortOrder": row.get("sort_order", 0),
+        "isActive": row.get("is_active", True),
     }
-]
 
-def load_news() -> List[dict]:
-    if not NEWS_FILE.exists():
-        with open(NEWS_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_NEWS, f, ensure_ascii=False, indent=2)
-        return DEFAULT_NEWS
-    try:
-        with open(NEWS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return DEFAULT_NEWS
 
-def save_news(news_list: List[dict]):
-    with open(NEWS_FILE, "w", encoding="utf-8") as f:
-        json.dump(news_list, f, ensure_ascii=False, indent=2)
+def _response_to_db_row(item: dict) -> dict:
+    """Convert frontend camelCase to DB snake_case."""
+    return {
+        "category": item["category"],
+        "title": item["title"],
+        "description": item.get("description", ""),
+        "image": item.get("image", ""),
+        "image_position": item.get("imagePosition", "center center"),
+        "thumb_type": item.get("thumbType", "img"),
+        "thumb_src": item.get("thumbSrc", ""),
+        "thumb_bg": item.get("thumbBg", "bg-blue"),
+        "sort_order": item.get("sortOrder", 0),
+        "is_active": item.get("isActive", True),
+    }
 
-@router.get("/", response_model=List[NewsItem])
-async def get_news_list():
-    return load_news()
 
-@router.post("/", response_model=NewsItem, status_code=status.HTTP_201_CREATED)
-async def create_or_update_news(
-    item: NewsItem,
-    current_user: CurrentUser = Depends(require_role("organizador", "admin", "staff"))
+def _process_item(item: dict, truncate_description: bool = False) -> dict:
+    """Convert Base64 images and optionally truncate description."""
+    if _is_base64_image(item.get("image", "")):
+        item["image"] = _convert_base64_to_file(item["image"])
+    if _is_base64_image(item.get("thumbSrc", "")):
+        item["thumbSrc"] = _convert_base64_to_file(item["thumbSrc"])
+    if truncate_description and item.get("description"):
+        desc = item["description"]
+        if len(desc) > 200:
+            item["description"] = desc[:200].rsplit(" ", 1)[0] + "..."
+    return item
+
+
+# --- Public endpoints ---
+
+@router.get("/", response_model=List[NewsItemResponse])
+async def get_news_list(
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+    db=Depends(get_db),
 ):
-    news_list = load_news()
-    
+    query = db.table("noticias").select("*").eq("is_active", True).order("sort_order", desc=False)
+
+    if limit is not None:
+        if offset is not None:
+            query = query.range(offset, offset + limit - 1)
+        else:
+            query = query.limit(limit)
+    elif offset is not None:
+        query = query.offset(offset)
+
+    result = query.execute()
+
+    items = [_db_row_to_response(row) for row in result.data]
+    items = [_process_item(item, truncate_description=True) for item in items]
+
+    response = JSONResponse(content=items)
+    response.headers.update(CACHE_HEADERS)
+    return response
+
+
+@router.get("/images/{filename}")
+async def get_news_image(
+    filename: str,
+    w: Optional[int] = Query(None, ge=80, le=2400, description="Ancho deseado en px"),
+):
+    filepath = NEWS_IMAGES_DIR / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+
+    ext = filepath.suffix.lower()
+    media_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(ext, "application/octet-stream")
+
+    if w and ext in (".jpg", ".jpeg", ".png", ".webp"):
+        try:
+            with PILImage.open(filepath) as img:
+                orig_w, orig_h = img.size
+                if w < orig_w:
+                    ratio = w / orig_w
+                    new_h = int(orig_h * ratio)
+                    resized = img.resize((w, new_h), PILImage.LANCZOS)
+                    if resized.mode == "RGBA":
+                        resized = resized.convert("RGB")
+                    buf = io.BytesIO()
+                    resized.save(buf, format="WEBP", quality=80, method=4)
+                    buf.seek(0)
+                    return Response(
+                        content=buf.read(),
+                        media_type="image/webp",
+                         headers={"Cache-Control": "public, max-age=31536000, immutable"},
+                    )
+        except Exception:
+            pass
+
+    response = FileResponse(filepath, media_type=media_type)
+    response.headers.update({"Cache-Control": "public, max-age=31536000, immutable"})
+    return response
+
+
+@router.get("/{news_id}", response_model=NewsItemResponse)
+async def get_news_item(news_id: int, db=Depends(get_db)):
+    result = db.table("noticias").select("*").eq("id", news_id).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Noticia no encontrada")
+
+    item = _db_row_to_response(result.data[0])
+    item = _process_item(item)
+
+    response = JSONResponse(content=item)
+    response.headers.update(CACHE_HEADERS)
+    return response
+
+
+# --- Admin endpoints ---
+
+@router.post("/", response_model=NewsItemResponse, status_code=status.HTTP_201_CREATED)
+async def create_or_update_news(
+    item: NewsItemCreate,
+    current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN, UserRole.STAFF)),
+    db=Depends(get_db),
+):
+    item_data = item.model_dump(exclude_unset=True)
+
+    # Convert camelCase to snake_case for DB
+    db_data = {}
+    field_map = {
+        "imagePosition": "image_position",
+        "thumbType": "thumb_type",
+        "thumbSrc": "thumb_src",
+        "thumbBg": "thumb_bg",
+        "sortOrder": "sort_order",
+        "isActive": "is_active",
+    }
+    for key, value in item_data.items():
+        db_key = field_map.get(key, key)
+        db_data[db_key] = value
+
+    # Process Base64 images
+    if _is_base64_image(db_data.get("image", "")):
+        db_data["image"] = _convert_base64_to_file(db_data["image"])
+    if _is_base64_image(db_data.get("thumb_src", "")):
+        db_data["thumb_src"] = _convert_base64_to_file(db_data["thumb_src"])
+
     if item.id:
         # Update existing
-        for idx, existing in enumerate(news_list):
-            if existing.get("id") == item.id:
-                news_list[idx] = item.model_dump()
-                save_news(news_list)
-                return item
-        raise HTTPException(status_code=404, detail="Noticia no encontrada")
+        result = db.table("noticias").update(db_data).eq("id", item.id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Noticia no encontrada")
+        return NewsItemResponse(**_db_row_to_response(result.data[0]))
     else:
         # Create new
-        next_id = max([x.get("id", 0) for x in news_list]) + 1 if news_list else 1
-        new_item_dict = item.model_dump()
-        new_item_dict["id"] = next_id
-        news_list.append(new_item_dict)
-        save_news(news_list)
-        return NewsItem(**new_item_dict)
+        result = db.table("noticias").insert(db_data).execute()
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al crear la noticia",
+            )
+        return NewsItemResponse(**_db_row_to_response(result.data[0]))
+
 
 @router.delete("/{news_id}", status_code=status.HTTP_200_OK)
 async def delete_news(
     news_id: int,
-    current_user: CurrentUser = Depends(require_role("organizador", "admin"))
+    current_user: CurrentUser = Depends(require_role(UserRole.ORGANIZADOR, UserRole.ADMIN)),
+    db=Depends(get_db),
 ):
-    news_list = load_news()
-    filtered = [x for x in news_list if x.get("id") != news_id]
-    if len(filtered) == len(news_list):
-        raise HTTPException(status_code=404, detail="Noticia no encontrada")
-    save_news(filtered)
+    result = db.table("noticias").delete().eq("id", news_id).execute()
+
     return {"message": "Noticia eliminada correctamente"}

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
         "https://precosquin-frontend.onrender.com",
         "https://precosquin-backend.onrender.com",
     ]
+    CORS_ORIGIN_REGEX: str = r"https://.*\.netlify\.app|https://.*\.netlify\.com"
     ALLOWED_HOSTS: List[str] = ["*"]
 
     SUPABASE_URL: str = ""
@@ -47,8 +48,14 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     SENDGRID_API_KEY: str = ""
-    SENDGRID_FROM_EMAIL: str = "noreply@precosquin.com"
-    SENDGRID_FROM_NAME: str = "Precosquin"
+    SENDGRID_FROM_EMAIL: str = "info@precosquinpiramides.com"
+    SENDGRID_FROM_NAME: str = "Pre-Cosquín Puerto Pirámides"
+
+    LOGO_URL: str = ""
+
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "noreply@contacto.precosquinpiramides.com"
+    RESEND_FROM_NAME: str = "Pre-Cosquín Puerto Pirámides"
 
     WHATSAPP_ACCESS_TOKEN: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""
@@ -60,6 +67,7 @@ class Settings(BaseSettings):
         "application/pdf",
         "image/jpeg",
         "image/png",
+        "image/webp",
         "audio/mpeg",
         "audio/wav",
         "video/mp4",
@@ -73,6 +81,15 @@ class Settings(BaseSettings):
 
     FRONTEND_URL: str = "http://localhost:4200"
     API_URL: str = "http://localhost:8000"
+
+    QR_ENCRYPTION_KEY: str = "PreCosquin2027!FestivalPuertoPiramides#QRSecure"
+
+    # Gemini AI (Chatbot)
+    GEMINI_API_KEY: str = ""
+
+    # Upstash Redis (Chatbot cache)
+    UPSTASH_REDIS_REST_URL: str = ""
+    UPSTASH_REDIS_REST_TOKEN: str = ""
 
     class Config:
         env_file = str(load_dotenv_path)
